@@ -1,6 +1,17 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { LLMProvider, LLMResponse, UNCERTAINTY_PATTERNS } from '../types.js';
+import { LLMProvider, LLMResponse } from '../types.js';
+
+// Patterns that indicate uncertainty in responses
+const UNCERTAINTY_PATTERNS = [
+  /I'm not (entirely )?sure/i,
+  /I think/i,
+  /might be/i,
+  /could be/i,
+  /possibly/i,
+  /I believe/i,
+  /it seems/i,
+];
 
 export class OpenAIProvider implements LLMProvider {
   name = 'openai';

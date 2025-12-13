@@ -7,6 +7,8 @@ export interface ClaudeAgentOptions {
   maxTokens?: number;
   tools?: AgentTool[];
   onToolCall?: (name: string, input: Record<string, unknown>) => Promise<ToolResult>;
+  maxToolCalls?: number;
+  maxTurns?: number;
 }
 
 export class ClaudeProvider implements LLMProvider {
@@ -16,6 +18,8 @@ export class ClaudeProvider implements LLMProvider {
   private maxTokens: number;
   private tools: AgentTool[];
   private onToolCall?: (name: string, input: Record<string, unknown>) => Promise<ToolResult>;
+  private maxToolCalls: number;
+  private maxTurns: number;
 
   constructor(options: ClaudeAgentOptions) {
     if (!options.apiKey) {
@@ -30,6 +34,8 @@ export class ClaudeProvider implements LLMProvider {
     this.maxTokens = options.maxTokens || 4096;
     this.tools = options.tools || [];
     this.onToolCall = options.onToolCall;
+    this.maxToolCalls = options.maxToolCalls ?? 20;
+    this.maxTurns = options.maxTurns ?? 10;
   }
 
   async generateResponse(prompt: string, context?: string): Promise<LLMResponse> {
@@ -55,15 +61,50 @@ export class ClaudeProvider implements LLMProvider {
       messages,
     });
 
-    // Agentic loop: handle tool calls
+    // Agentic loop: handle tool calls with budget guards
+    let turnCount = 0;
+    let toolCallCount = 0;
+
     while (response.stop_reason === 'tool_use') {
+      turnCount++;
+
+      // Check turn limit
+      if (turnCount > this.maxTurns) {
+        const warning = `\n\n[Agent stopped: reached maximum turns (${this.maxTurns}). Use --maxTurns to increase.]`;
+        const textBlocks = response.content.filter(
+          (block): block is Anthropic.TextBlock => block.type === 'text'
+        );
+        const partialContent = textBlocks.map((b) => b.text).join('\n');
+        return {
+          content: partialContent + warning,
+          model: `claude:${this.model}`,
+          confidence: 0.5,
+        };
+      }
+
       const toolUseBlocks = response.content.filter(
         (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
       );
 
+      // Check tool call limit
+      if (toolCallCount + toolUseBlocks.length > this.maxToolCalls) {
+        const warning = `\n\n[Agent stopped: reached maximum tool calls (${this.maxToolCalls}). Use --maxToolCalls to increase.]`;
+        const textBlocks = response.content.filter(
+          (block): block is Anthropic.TextBlock => block.type === 'text'
+        );
+        const partialContent = textBlocks.map((b) => b.text).join('\n');
+        return {
+          content: partialContent + warning,
+          model: `claude:${this.model}`,
+          confidence: 0.5,
+        };
+      }
+
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const toolUse of toolUseBlocks) {
+        toolCallCount++;
+
         if (this.onToolCall) {
           const result = await this.onToolCall(
             toolUse.name,

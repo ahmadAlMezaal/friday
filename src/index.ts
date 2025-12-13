@@ -25,8 +25,11 @@ program
     ''
   )
   .option('--apply', 'Allow file changes (default: dry-run)', false)
+  .option('--approve', 'Show patches and require y/N confirmation before applying', false)
   .option('--verbose', 'Show detailed tool call information', false)
   .option('--cwd <path>', 'Working directory')
+  .option('--maxToolCalls <n>', 'Maximum tool calls allowed (default: 20)', '20')
+  .option('--maxTurns <n>', 'Maximum agent loop turns (default: 10)', '10')
   .action(async (opts) => {
     try {
       // Parse advisors from comma-separated string
@@ -49,9 +52,12 @@ program
         task: opts.task,
         advisors: advisorList,
         apply: opts.apply,
-        dryRun: !opts.apply,
+        approve: opts.approve,
+        dryRun: !opts.apply && !opts.approve,
         cwd: opts.cwd || process.cwd(),
         verbose: opts.verbose,
+        maxToolCalls: parseInt(opts.maxToolCalls, 10),
+        maxTurns: parseInt(opts.maxTurns, 10),
       });
 
       // Load and validate config
@@ -70,10 +76,13 @@ program
           ? options.advisors.join(', ')
           : chalk.gray('none (Claude works independently)')
       );
-      console.log(
-        chalk.bold('Apply changes:'),
-        options.apply ? chalk.green('Yes') : chalk.yellow('No (dry-run)')
-      );
+      const modeLabel = options.apply
+        ? chalk.green('Apply (immediate)')
+        : options.approve
+          ? chalk.cyan('Approve (confirm each)')
+          : chalk.yellow('Dry-run (read-only)');
+      console.log(chalk.bold('Mode:'), modeLabel);
+      console.log(chalk.bold('Limits:'), `${options.maxToolCalls} tool calls, ${options.maxTurns} turns`);
       console.log('');
 
       // Run orchestrator

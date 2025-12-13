@@ -5,9 +5,12 @@ export const CliOptionsSchema = z.object({
   task: z.string(),
   advisors: z.array(z.enum(['openai', 'gemini'])).default([]),
   apply: z.boolean().default(false),
+  approve: z.boolean().default(false),
   dryRun: z.boolean().default(true),
   cwd: z.string().optional(),
   verbose: z.boolean().default(false),
+  maxToolCalls: z.number().int().positive().default(20),
+  maxTurns: z.number().int().positive().default(10),
 });
 
 export type CliOptions = z.infer<typeof CliOptionsSchema>;

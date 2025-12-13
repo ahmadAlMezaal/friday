@@ -1,11 +1,27 @@
 import { readFile as fsReadFile, writeFile as fsWriteFile } from 'fs/promises';
 import { join, isAbsolute } from 'path';
 import { applyPatch as diffApplyPatch } from 'diff';
+import { createInterface } from 'readline';
 import { OperationResult } from '../../types.js';
 
 export interface ApplyPatchOptions {
   cwd: string;
   allowWrite: boolean;
+  requireApproval?: boolean;
+}
+
+async function promptForApproval(message: string): Promise<boolean> {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    rl.question(`${message} [y/N]: `, (answer) => {
+      rl.close();
+      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+    });
+  });
 }
 
 export async function applyPatch(
@@ -13,11 +29,11 @@ export async function applyPatch(
   unifiedDiff: string,
   options: ApplyPatchOptions
 ): Promise<OperationResult> {
-  // Safety check: require explicit --apply flag
-  if (!options.allowWrite) {
+  // Safety check: require explicit --apply or --approve flag
+  if (!options.allowWrite && !options.requireApproval) {
     return {
       ok: false,
-      message: 'Patch application is disabled. Use --apply flag to enable file modifications.',
+      message: 'Patch application is disabled. Use --apply or --approve flag to enable file modifications.',
     };
   }
 
@@ -49,6 +65,23 @@ export async function applyPatch(
         ok: false,
         message: 'Failed to apply patch: patch does not match current file content',
       };
+    }
+
+    // If approval is required, show diff and prompt
+    if (options.requireApproval) {
+      console.log('\n' + '─'.repeat(60));
+      console.log(`🔧 Proposed patch to: ${path}`);
+      console.log('─'.repeat(60));
+      console.log(unifiedDiff);
+      console.log('─'.repeat(60));
+
+      const approved = await promptForApproval('Apply this patch?');
+      if (!approved) {
+        return {
+          ok: false,
+          message: `Patch to ${path} was rejected by user.`,
+        };
+      }
     }
 
     // Write patched content

@@ -86,12 +86,15 @@ function buildTools(options: CliOptions): AgentTool[] {
     },
   ];
 
-  // Add write tools only if --apply is set
-  if (options.apply) {
+  // Add write tools only if --apply or --approve is set
+  if (options.apply || options.approve) {
+    const modeNote = options.approve
+      ? 'User will be prompted to approve each change.'
+      : 'Changes will be applied immediately.';
     tools.push(
       {
         name: 'write_file',
-        description: 'Write content to a file. Only available when --apply flag is set.',
+        description: `Write content to a file. ${modeNote}`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -109,7 +112,7 @@ function buildTools(options: CliOptions): AgentTool[] {
       },
       {
         name: 'apply_patch',
-        description: 'Apply a unified diff patch to a file. Only available when --apply flag is set.',
+        description: `Apply a unified diff patch to a file. ${modeNote}`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -129,17 +132,23 @@ function buildTools(options: CliOptions): AgentTool[] {
   }
 
   // Add advisor tools based on --advisors flag
+  // Advisor prompts should be structured: task summary, relevant snippets, constraints, explicit question
+  const advisorPromptGuidance = `Structure your prompt as:
+1. TASK: Brief summary of what you're working on
+2. CONTEXT: Only relevant code snippets (max 50 lines)
+3. CONSTRAINTS: Any requirements (tests, style, compatibility)
+4. QUESTION: Specific question with expected response format`;
+
   if (options.advisors.includes('openai')) {
     tools.push({
       name: 'ask_openai',
-      description:
-        'Ask OpenAI GPT for a second opinion or alternative perspective. Use this when you want another viewpoint on architecture decisions, complex trade-offs, or to validate your reasoning.',
+      description: `Ask OpenAI GPT for a second opinion. Use for architecture decisions, trade-offs, or validation. ${advisorPromptGuidance}`,
       inputSchema: {
         type: 'object',
         properties: {
           prompt: {
             type: 'string',
-            description: 'The question or context to ask OpenAI about',
+            description: 'Structured prompt with TASK, CONTEXT, CONSTRAINTS, and QUESTION sections',
           },
         },
         required: ['prompt'],
@@ -150,14 +159,13 @@ function buildTools(options: CliOptions): AgentTool[] {
   if (options.advisors.includes('gemini')) {
     tools.push({
       name: 'ask_gemini',
-      description:
-        'Ask Google Gemini for a second opinion or alternative perspective. Use this when you want another viewpoint.',
+      description: `Ask Google Gemini for a second opinion. ${advisorPromptGuidance}`,
       inputSchema: {
         type: 'object',
         properties: {
           prompt: {
             type: 'string',
-            description: 'The question or context to ask Gemini about',
+            description: 'Structured prompt with TASK, CONTEXT, CONSTRAINTS, and QUESTION sections',
           },
         },
         required: ['prompt'],
@@ -208,26 +216,26 @@ async function executeToolCall(
       }
 
       case 'write_file': {
-        if (!options.apply) {
-          return { error: 'File writes are disabled. Use --apply flag to enable.' };
+        if (!options.apply && !options.approve) {
+          return { error: 'File writes are disabled. Use --apply or --approve flag to enable.' };
         }
         const writeResult = await writeFile(
           input.path as string,
           input.content as string,
-          { cwd, allowWrite: true }
+          { cwd, allowWrite: options.apply, requireApproval: options.approve }
         );
         result = JSON.stringify(writeResult);
         break;
       }
 
       case 'apply_patch': {
-        if (!options.apply) {
-          return { error: 'Patch application is disabled. Use --apply flag to enable.' };
+        if (!options.apply && !options.approve) {
+          return { error: 'Patch application is disabled. Use --apply or --approve flag to enable.' };
         }
         const patchResult = await applyPatch(
           input.path as string,
           input.unifiedDiff as string,
-          { cwd, allowWrite: true }
+          { cwd, allowWrite: options.apply, requireApproval: options.approve }
         );
         result = JSON.stringify(patchResult);
         break;
@@ -278,28 +286,38 @@ async function executeToolCall(
   }
 }
 
-// Node: Gather initial context
+/**
+ * Deterministic Context Pack
+ *
+ * This is NOT Claude-driven tool usage. This is a fixed pre-flight step that runs
+ * BEFORE Claude is invoked, providing a minimal context pack:
+ * - Git diff (if in a git repo)
+ * - Quick keyword search based on task (first 3 words)
+ *
+ * Design choice: This reduces latency by front-loading common context that Claude
+ * would likely request anyway. Claude can still use tools to gather more context.
+ */
 async function gatherContext(state: GraphState): Promise<Partial<GraphState>> {
   const cwd = state.options.cwd || process.cwd();
   const contextParts: string[] = [];
 
-  // Get git diff if available
+  // Deterministic: always get git diff if available
   try {
     const diffResult = await gitDiff({ cwd });
     if (diffResult.diff && !diffResult.diff.includes('No changes')) {
-      contextParts.push('Current git changes:');
+      contextParts.push('## Git Changes (auto-gathered)');
       contextParts.push(diffResult.diff.substring(0, 3000));
     }
   } catch {
-    // Ignore git errors
+    // Ignore git errors (not a git repo)
   }
 
-  // Do a quick search based on task keywords
+  // Deterministic: keyword search based on first 3 words of task
   try {
     const keywords = state.task.split(' ').slice(0, 3).join(' ');
     const searchResult = await repoSearch(keywords, { cwd, maxResults: 5 });
     if (searchResult.matches.length > 0) {
-      contextParts.push('\nPotentially relevant files:');
+      contextParts.push('\n## Potentially Relevant Files (auto-gathered)');
       for (const match of searchResult.matches) {
         contextParts.push(`  ${match.file}:${match.line} - ${match.preview}`);
       }
@@ -333,6 +351,8 @@ async function runClaudeAgent(state: GraphState): Promise<Partial<GraphState>> {
     onToolCall: async (name, input) => {
       return executeToolCall(name, input, state.options, toolCalls, advisorResponses);
     },
+    maxToolCalls: state.options.maxToolCalls,
+    maxTurns: state.options.maxTurns,
   });
 
   // Build the task prompt with context
@@ -364,6 +384,8 @@ async function runClaudeAgent(state: GraphState): Promise<Partial<GraphState>> {
 
 // Create the orchestrator graph
 export function createOrchestratorGraph() {
+  // Use type assertion to work around LangGraph's strict typing
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const workflow = new StateGraph<GraphState>({
     channels: {
       task: {
@@ -394,7 +416,8 @@ export function createOrchestratorGraph() {
         default: () => [],
       },
     },
-  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any;
 
   // Add nodes
   workflow.addNode('gather_context', gatherContext);

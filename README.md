@@ -31,7 +31,8 @@ A Claude-primary LLM orchestrator where **Claude is the single reasoning brain**
 - **Claude as Primary**: Claude (Anthropic API) is the primary reasoning agent
 - **Advisor Tools**: Claude can call `ask_openai` and `ask_gemini` when it wants a second opinion
 - **MCP Tools**: Repository operations (search, read, write, patch, run commands)
-- **Safe by Default**: File changes only with explicit `--apply` flag
+- **Safe by Default**: File changes require `--apply` (immediate) or `--approve` (confirm each)
+- **Budget Guards**: Configurable limits on tool calls and agent turns
 - **Claude Decides**: No automatic advisor consultation - Claude chooses when to ask
 
 ## Installation
@@ -74,9 +75,12 @@ yarn llm:help --task "suggest refactoring approach" --advisors openai,gemini
 |------|-------------|---------|
 | `--task <prompt>` | The task or question for Claude | Required |
 | `--advisors <list>` | Comma-separated advisors: `openai,gemini` | `[]` (none) |
-| `--apply` | Allow file changes | `false` |
+| `--apply` | Allow file changes (immediate) | `false` |
+| `--approve` | Allow file changes (confirm each) | `false` |
 | `--verbose` | Show detailed tool call information | `false` |
 | `--cwd <path>` | Working directory | Current directory |
+| `--maxToolCalls <n>` | Maximum tool calls allowed | `20` |
+| `--maxTurns <n>` | Maximum agent loop turns | `10` |
 
 ### Examples
 
@@ -104,13 +108,16 @@ yarn llm:help --task "refactor the payment processing module" --advisors openai,
 
 Claude can consult both OpenAI and Gemini. Use `--verbose` to see which tools Claude used.
 
-#### 4. Implement Changes
+#### 4. Implement Changes (Three Modes)
 
 ```bash
-# First, dry-run to see Claude's plan
+# Dry-run: see Claude's plan without making changes
 yarn llm:help --task "add input validation to the login function"
 
-# If you approve, run with --apply to allow file changes
+# Approve mode: review and confirm each file change
+yarn llm:help --task "add input validation to the login function" --approve
+
+# Apply mode: allow immediate file changes
 yarn llm:help --task "add input validation to the login function" --apply
 ```
 
@@ -123,9 +130,16 @@ yarn llm:help --task "review this error handling approach" --advisors openai
 In this scenario:
 1. Claude reads the relevant code
 2. Claude decides it wants another perspective
-3. Claude calls `ask_openai("What do you think of this error handling pattern?")`
+3. Claude calls `ask_openai` with a structured prompt
 4. Claude receives GPT's response
 5. Claude synthesizes both perspectives into a final recommendation
+
+#### 6. Limit Budget for Cost Control
+
+```bash
+# Limit to 5 tool calls and 3 agent turns
+yarn llm:help --task "explore this codebase" --maxToolCalls 5 --maxTurns 3
+```
 
 ### Additional Commands
 
@@ -186,7 +200,7 @@ src/
 START
   │
   ▼
-[Gather Context] ─── Get git diff, search for relevant files
+[Deterministic Context Pack] ─── git diff + keyword search (pre-flight)
   │
   ▼
 [Claude Agent] ◄────────────────────────────────┐
@@ -198,16 +212,25 @@ START
   └── Continue reasoning ───────────────────────┘
   │
   ▼
+[Budget Check] ─── maxToolCalls / maxTurns limit
+  │
+  ▼
 [Claude Final Output]
   │
   ▼
 END
 ```
 
+**Note on Context Gathering**: Before Claude is invoked, a deterministic "context pack" is gathered automatically:
+1. Git diff (if in a git repository)
+2. Keyword search based on the first 3 words of your task
+
+This is NOT Claude-driven tool usage. It's a fixed pre-flight step to reduce latency. Claude can still use tools to gather additional context as needed.
+
 ### Tools Available to Claude
 
-| Tool | Description | Requires `--apply` | Requires `--advisors` |
-|------|-------------|-------------------|----------------------|
+| Tool | Description | Requires `--apply` or `--approve` | Requires `--advisors` |
+|------|-------------|----------------------------------|----------------------|
 | `repo_search` | Search for patterns in files | No | No |
 | `read_file` | Read file contents | No | No |
 | `git_diff` | Get current git diff | No | No |
@@ -222,8 +245,10 @@ END
 1. **Claude owns the flow**: Advisors never make decisions or take actions
 2. **Advisors are text-only**: They receive prompts and return text responses
 3. **No direct tool access for advisors**: Only Claude can use MCP tools
-4. **File writes require `--apply`**: Safe by default
+4. **File writes require explicit flag**: `--apply` (immediate) or `--approve` (confirm)
 5. **Command allowlist**: Only safe commands can be executed
+6. **Budget guards**: Configurable limits prevent runaway costs
+7. **Path traversal protection**: File operations restricted to working directory
 
 ### Allowed Commands
 
