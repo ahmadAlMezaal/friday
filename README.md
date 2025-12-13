@@ -1,17 +1,38 @@
-# LLM Orchestrator
+# LLM Orchestrator v2
 
-A multi-LLM helper orchestrator where Claude is the primary model (used via Claude Code), with the ability to consult secondary LLMs (OpenAI/GPT-4, optionally Gemini) for second opinions, alternative solutions, and debugging help.
+A Claude-primary LLM orchestrator where **Claude is the single reasoning brain**. Claude can optionally consult advisor models (OpenAI GPT, Google Gemini) for second opinions, but Claude always makes the final decisions.
+
+## Key Concept: Claude as Primary Agent
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Claude (Primary Agent)                   │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │  MCP Tools   │  │   Advisor    │  │   Advisor    │       │
+│  │  (repo ops)  │  │   (OpenAI)   │  │   (Gemini)   │       │
+│  └──────────────┘  └──────────────┘  └──────────────┘       │
+│         │                 │                 │                │
+│         ▼                 ▼                 ▼                │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │              Claude's Final Response                 │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**This is NOT a multi-agent debate system.** This is sequential delegation where:
+- Claude owns the reasoning flow
+- Advisors only provide text responses to Claude's questions
+- Advisors cannot edit files or run commands
+- Claude alone produces the final output
 
 ## Features
 
-- **Multi-LLM Orchestration**: Primary analysis with optional secondary opinions
-- **Smart Auto-Consultation**: Automatically consults secondary LLM when:
-  - Primary response indicates uncertainty ("not sure", "might", "unclear")
-  - Task involves non-trivial refactoring or architecture decisions
-  - Tests are failing or errors are detected
-- **MCP Server**: Exposes tools for repo operations (search, read, write, patch, run commands)
+- **Claude as Primary**: Claude (Anthropic API) is the primary reasoning agent
+- **Advisor Tools**: Claude can call `ask_openai` and `ask_gemini` when it wants a second opinion
+- **MCP Tools**: Repository operations (search, read, write, patch, run commands)
 - **Safe by Default**: File changes only with explicit `--apply` flag
-- **Allowlisted Commands**: Only safe commands can be executed
+- **Claude Decides**: No automatic advisor consultation - Claude chooses when to ask
 
 ## Installation
 
@@ -24,10 +45,11 @@ yarn build
 ## Environment Variables
 
 ```bash
-# Required for secondary model (OpenAI)
-export OPENAI_API_KEY=your-openai-api-key
+# REQUIRED - Claude is the primary agent
+export ANTHROPIC_API_KEY=your-anthropic-api-key
 
-# Optional (for future Gemini support)
+# Optional - Only needed if you enable advisors
+export OPENAI_API_KEY=your-openai-api-key
 export GEMINI_API_KEY=your-gemini-api-key
 ```
 
@@ -36,73 +58,74 @@ export GEMINI_API_KEY=your-gemini-api-key
 ### Basic Command
 
 ```bash
-# Ask for help with a task
+# Ask Claude for help (no advisors)
 yarn llm:help --task "explain what this function does"
 
-# Or using node directly
-node dist/index.js --task "summarize the failing tests"
+# Enable OpenAI as an advisor Claude can consult
+yarn llm:help --task "review this architecture" --advisors openai
+
+# Enable multiple advisors
+yarn llm:help --task "suggest refactoring approach" --advisors openai,gemini
 ```
 
 ### CLI Options
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--task <prompt>` | The task or question to analyze | Required |
-| `--modelPrimary <model>` | Primary model (conceptual) | `claude` |
-| `--modelSecondary <model>` | Secondary model | `openai:gpt-4.1` |
-| `--when <mode>` | When to consult secondary: `auto\|always\|never` | `auto` |
+| `--task <prompt>` | The task or question for Claude | Required |
+| `--advisors <list>` | Comma-separated advisors: `openai,gemini` | `[]` (none) |
 | `--apply` | Allow file changes | `false` |
-| `--dry-run` | Dry run mode | `true` |
+| `--verbose` | Show detailed tool call information | `false` |
 | `--cwd <path>` | Working directory | Current directory |
 
 ### Examples
 
-#### 1. Summarize Current Failing Tests
+#### 1. Simple Analysis (Claude Only)
 
 ```bash
-yarn llm:help --task "summarize the current failing tests and suggest fixes"
+yarn llm:help --task "summarize the current failing tests"
 ```
 
-This will:
-1. Gather context from the repository (search for test files, get git diff)
-2. Primary LLM analyzes the situation
-3. If uncertainty detected or tests are failing, consult secondary LLM
-4. Merge and present recommendations
+Claude analyzes the task independently without consulting any advisors.
 
-#### 2. Suggest Approach for Feature
+#### 2. Architecture Decision with Second Opinion
 
 ```bash
-yarn llm:help --task "suggest an approach for implementing user authentication" --when always
+yarn llm:help --task "suggest an approach for implementing user authentication" --advisors openai
 ```
 
-Using `--when always` ensures the secondary LLM is always consulted for architectural decisions.
+Claude has access to the `ask_openai` tool and may choose to consult GPT for a second opinion on architectural decisions.
 
-#### 3. Implement a Small Change
+#### 3. Complex Refactoring with Multiple Perspectives
 
 ```bash
-# First, dry-run to see what would be changed
+yarn llm:help --task "refactor the payment processing module" --advisors openai,gemini --verbose
+```
+
+Claude can consult both OpenAI and Gemini. Use `--verbose` to see which tools Claude used.
+
+#### 4. Implement Changes
+
+```bash
+# First, dry-run to see Claude's plan
 yarn llm:help --task "add input validation to the login function"
 
-# If you approve, run with --apply to make changes
+# If you approve, run with --apply to allow file changes
 yarn llm:help --task "add input validation to the login function" --apply
 ```
 
-#### 4. Get Secondary Opinion Only When Uncertain
+#### 5. Claude Asks GPT for a Second Opinion (Example Flow)
 
 ```bash
-yarn llm:help --task "fix the bug in the payment processing" --when auto
+yarn llm:help --task "review this error handling approach" --advisors openai
 ```
 
-With `--when auto` (default), secondary is consulted only if:
-- Primary response contains uncertainty ("not sure", "might", etc.)
-- Task involves refactoring/architecture
-- Error patterns detected in context
-
-#### 5. Primary Only (No Secondary)
-
-```bash
-yarn llm:help --task "add a console.log for debugging" --when never
-```
+In this scenario:
+1. Claude reads the relevant code
+2. Claude decides it wants another perspective
+3. Claude calls `ask_openai("What do you think of this error handling pattern?")`
+4. Claude receives GPT's response
+5. Claude synthesizes both perspectives into a final recommendation
 
 ### Additional Commands
 
@@ -129,16 +152,78 @@ yarn llm:help mcp
 yarn llm:help mcp --apply
 ```
 
-### MCP Tools Available
+## Architecture
 
-| Tool | Description | Requires `--apply` |
-|------|-------------|-------------------|
-| `repo_search` | Search for patterns in files | No |
-| `read_file` | Read file contents | No |
-| `write_file` | Write content to file | Yes |
-| `apply_patch` | Apply unified diff patch | Yes |
-| `run_command` | Run allowlisted command | No |
-| `git_diff` | Get current git diff | No |
+```
+src/
+├── index.ts           # CLI entrypoint
+├── router.ts          # LangGraph orchestration (Claude agent loop)
+├── types.ts           # TypeScript types and schemas
+├── config.ts          # Configuration management
+├── providers/
+│   ├── index.ts       # Provider exports
+│   ├── claude.ts      # Claude provider (primary agent)
+│   ├── openai.ts      # OpenAI provider (for advisor)
+│   └── gemini.ts      # Gemini stub
+├── advisors/
+│   ├── index.ts       # Advisor exports
+│   ├── openai.ts      # ask_openai implementation
+│   └── gemini.ts      # ask_gemini implementation
+└── mcp/
+    ├── server.ts      # MCP server implementation
+    └── tools/
+        ├── repo-search.ts
+        ├── read-file.ts
+        ├── write-file.ts
+        ├── apply-patch.ts
+        ├── run-command.ts
+        └── git-diff.ts
+```
+
+### Orchestration Flow
+
+```
+START
+  │
+  ▼
+[Gather Context] ─── Get git diff, search for relevant files
+  │
+  ▼
+[Claude Agent] ◄────────────────────────────────┐
+  │                                              │
+  ├── Use MCP tools (repo_search, read_file)    │
+  │                                              │
+  ├── Use advisor tools (ask_openai, ask_gemini)│
+  │                                              │
+  └── Continue reasoning ───────────────────────┘
+  │
+  ▼
+[Claude Final Output]
+  │
+  ▼
+END
+```
+
+### Tools Available to Claude
+
+| Tool | Description | Requires `--apply` | Requires `--advisors` |
+|------|-------------|-------------------|----------------------|
+| `repo_search` | Search for patterns in files | No | No |
+| `read_file` | Read file contents | No | No |
+| `git_diff` | Get current git diff | No | No |
+| `run_command` | Run allowlisted command | No | No |
+| `write_file` | Write content to file | Yes | No |
+| `apply_patch` | Apply unified diff patch | Yes | No |
+| `ask_openai` | Get second opinion from GPT | No | `openai` |
+| `ask_gemini` | Get second opinion from Gemini | No | `gemini` |
+
+### Safety Guarantees
+
+1. **Claude owns the flow**: Advisors never make decisions or take actions
+2. **Advisors are text-only**: They receive prompts and return text responses
+3. **No direct tool access for advisors**: Only Claude can use MCP tools
+4. **File writes require `--apply`**: Safe by default
+5. **Command allowlist**: Only safe commands can be executed
 
 ### Allowed Commands
 
@@ -167,71 +252,17 @@ yarn typecheck
 yarn build
 ```
 
-## Architecture
+## Migration from v1
 
-```
-src/
-├── index.ts           # CLI entrypoint
-├── router.ts          # LangGraph orchestration logic
-├── types.ts           # TypeScript types and schemas
-├── config.ts          # Configuration management
-├── providers/
-│   ├── index.ts       # Provider factory
-│   ├── openai.ts      # OpenAI provider
-│   └── gemini.ts      # Gemini stub (future)
-└── mcp/
-    ├── server.ts      # MCP server implementation
-    └── tools/
-        ├── repo-search.ts
-        ├── read-file.ts
-        ├── write-file.ts
-        ├── apply-patch.ts
-        ├── run-command.ts
-        └── git-diff.ts
-```
+If you were using v1 of this tool:
 
-### Orchestration Flow (LangGraph)
-
-```
-START
-  │
-  ▼
-[Gather Context] ─── Search repo, get git diff
-  │
-  ▼
-[Primary Analysis] ─── Analyze task with context
-  │
-  ▼
-{Should call secondary?}
-  │
-  ├── YES ──► [Secondary Analysis] ─── Get second opinion
-  │                    │
-  │                    ▼
-  │            [Merge Responses]
-  │                    │
-  └── NO ─────────────►│
-                       │
-                       ▼
-                     [Output]
-                       │
-                       ▼
-                      END
-```
-
-### Decision Logic for Auto-Consultation
-
-The router decides to consult the secondary LLM when `--when=auto` and ANY of:
-
-1. **Uncertainty detected** in primary response:
-   - "not sure", "might be", "could be", "unclear", "uncertain"
-   - "possibly", "perhaps", "I think", "probably", "may need"
-
-2. **Complex task** indicated by keywords:
-   - "refactor", "architecture", "redesign", "restructure"
-   - "migrate", "breaking change", "significant change"
-
-3. **Errors detected** in context:
-   - "error", "fail", "exception", "test.*fail", "broken"
+| v1 Flag | v2 Equivalent |
+|---------|---------------|
+| `--modelPrimary` | Removed (always Claude) |
+| `--modelSecondary` | Use `--advisors openai` |
+| `--when auto` | Removed (Claude decides) |
+| `--when always` | Use `--advisors openai` |
+| `--when never` | Don't pass `--advisors` |
 
 ## License
 

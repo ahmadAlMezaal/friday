@@ -1,6 +1,7 @@
 import { CliOptions } from './types.js';
 
 export interface Config {
+  anthropicApiKey?: string;
   openaiApiKey?: string;
   geminiApiKey?: string;
   workingDirectory: string;
@@ -8,10 +9,12 @@ export interface Config {
 }
 
 export function loadConfig(options: CliOptions): Config {
+  const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
   const openaiApiKey = process.env.OPENAI_API_KEY;
   const geminiApiKey = process.env.GEMINI_API_KEY;
 
   return {
+    anthropicApiKey,
     openaiApiKey,
     geminiApiKey,
     workingDirectory: options.cwd || process.cwd(),
@@ -20,19 +23,31 @@ export function loadConfig(options: CliOptions): Config {
 }
 
 export function validateConfig(config: Config): void {
-  const secondary = config.options.modelSecondary;
-
-  if (secondary.startsWith('openai:') && !config.openaiApiKey) {
+  // Claude (primary) is always required
+  if (!config.anthropicApiKey) {
     throw new Error(
-      'OPENAI_API_KEY environment variable is required when using OpenAI as secondary model.\n' +
-        'Please set it: export OPENAI_API_KEY=your-key-here'
+      'ANTHROPIC_API_KEY environment variable is required.\n' +
+        'Claude is the primary agent and must be configured.\n' +
+        'Please set it: export ANTHROPIC_API_KEY=your-key-here'
     );
   }
 
-  if (secondary.startsWith('gemini:') && !config.geminiApiKey) {
-    throw new Error(
-      'GEMINI_API_KEY environment variable is required when using Gemini as secondary model.\n' +
-        'Please set it: export GEMINI_API_KEY=your-key-here'
+  // Validate advisor API keys if they're requested
+  const advisors = config.options.advisors;
+
+  if (advisors.includes('openai') && !config.openaiApiKey) {
+    console.warn(
+      'Warning: OpenAI advisor requested but OPENAI_API_KEY is not set.\n' +
+        'Claude will receive an error if it tries to use the ask_openai tool.\n' +
+        'Set it: export OPENAI_API_KEY=your-key-here\n'
+    );
+  }
+
+  if (advisors.includes('gemini') && !config.geminiApiKey) {
+    console.warn(
+      'Warning: Gemini advisor requested but GEMINI_API_KEY is not set.\n' +
+        'Claude will receive an error if it tries to use the ask_gemini tool.\n' +
+        'Set it: export GEMINI_API_KEY=your-key-here\n'
     );
   }
 }

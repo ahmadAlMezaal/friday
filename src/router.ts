@@ -1,56 +1,306 @@
 import { StateGraph, END, START } from '@langchain/langgraph';
-import { BaseMessage, HumanMessage, AIMessage } from '@langchain/core/messages';
 import {
   OrchestratorState,
-  LLMResponse,
-  UNCERTAINTY_PATTERNS,
-  COMPLEXITY_PATTERNS,
   CliOptions,
+  AgentTool,
+  ToolResult,
+  ToolCallRecord,
+  AdvisorResponse,
 } from './types.js';
-import { createProvider } from './providers/index.js';
-import { repoSearch, readFile, gitDiff, runCommand } from './mcp/tools/index.js';
+import { ClaudeProvider } from './providers/claude.js';
+import { askOpenAI } from './advisors/openai.js';
+import { askGemini } from './advisors/gemini.js';
+import {
+  repoSearch,
+  readFile,
+  writeFile,
+  applyPatch,
+  runCommand,
+  gitDiff,
+} from './mcp/tools/index.js';
 
-// State for the graph
+// Graph state interface
 interface GraphState {
   task: string;
   options: CliOptions;
   context: string;
-  primaryResponse: LLMResponse | null;
-  secondaryResponse: LLMResponse | null;
-  shouldCallSecondary: boolean;
-  mergedRecommendation: string;
-  messages: BaseMessage[];
+  response: { content: string; model: string } | null;
+  advisorResponses: AdvisorResponse[];
+  toolCalls: ToolCallRecord[];
 }
 
-// Create initial state
-function createInitialState(task: string, options: CliOptions): GraphState {
-  return {
-    task,
-    options,
-    context: '',
-    primaryResponse: null,
-    secondaryResponse: null,
-    shouldCallSecondary: false,
-    mergedRecommendation: '',
-    messages: [],
-  };
+// Build the tool definitions for Claude
+function buildTools(options: CliOptions): AgentTool[] {
+  const tools: AgentTool[] = [
+    // Repository tools
+    {
+      name: 'repo_search',
+      description: 'Search for text patterns in repository files. Returns matching files, line numbers, and previews.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The search query to find in files',
+          },
+        },
+        required: ['query'],
+      },
+    },
+    {
+      name: 'read_file',
+      description: 'Read the contents of a file in the repository.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Path to the file (relative to repository root)',
+          },
+        },
+        required: ['path'],
+      },
+    },
+    {
+      name: 'git_diff',
+      description: 'Get the current git diff showing staged and unstaged changes.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+    {
+      name: 'run_command',
+      description: 'Run an allowed command (yarn test, yarn lint, git status, etc.). Only safe commands are permitted.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          cmd: {
+            type: 'string',
+            description: 'The command to run (must be in allowlist)',
+          },
+        },
+        required: ['cmd'],
+      },
+    },
+  ];
+
+  // Add write tools only if --apply is set
+  if (options.apply) {
+    tools.push(
+      {
+        name: 'write_file',
+        description: 'Write content to a file. Only available when --apply flag is set.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: {
+              type: 'string',
+              description: 'Path to the file (relative to repository root)',
+            },
+            content: {
+              type: 'string',
+              description: 'Content to write to the file',
+            },
+          },
+          required: ['path', 'content'],
+        },
+      },
+      {
+        name: 'apply_patch',
+        description: 'Apply a unified diff patch to a file. Only available when --apply flag is set.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: {
+              type: 'string',
+              description: 'Path to the file (relative to repository root)',
+            },
+            unifiedDiff: {
+              type: 'string',
+              description: 'The unified diff to apply',
+            },
+          },
+          required: ['path', 'unifiedDiff'],
+        },
+      }
+    );
+  }
+
+  // Add advisor tools based on --advisors flag
+  if (options.advisors.includes('openai')) {
+    tools.push({
+      name: 'ask_openai',
+      description:
+        'Ask OpenAI GPT for a second opinion or alternative perspective. Use this when you want another viewpoint on architecture decisions, complex trade-offs, or to validate your reasoning.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          prompt: {
+            type: 'string',
+            description: 'The question or context to ask OpenAI about',
+          },
+        },
+        required: ['prompt'],
+      },
+    });
+  }
+
+  if (options.advisors.includes('gemini')) {
+    tools.push({
+      name: 'ask_gemini',
+      description:
+        'Ask Google Gemini for a second opinion or alternative perspective. Use this when you want another viewpoint.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          prompt: {
+            type: 'string',
+            description: 'The question or context to ask Gemini about',
+          },
+        },
+        required: ['prompt'],
+      },
+    });
+  }
+
+  return tools;
 }
 
-// Node: Gather context from the repository
+// Tool execution handler
+async function executeToolCall(
+  name: string,
+  input: Record<string, unknown>,
+  options: CliOptions,
+  toolCalls: ToolCallRecord[],
+  advisorResponses: AdvisorResponse[]
+): Promise<ToolResult> {
+  const cwd = options.cwd || process.cwd();
+  const timestamp = new Date();
+
+  try {
+    let result: string;
+
+    switch (name) {
+      case 'repo_search': {
+        const searchResult = await repoSearch(input.query as string, { cwd });
+        result = JSON.stringify(searchResult, null, 2);
+        break;
+      }
+
+      case 'read_file': {
+        const fileResult = await readFile(input.path as string, { cwd });
+        result = fileResult.content;
+        break;
+      }
+
+      case 'git_diff': {
+        const diffResult = await gitDiff({ cwd });
+        result = diffResult.diff;
+        break;
+      }
+
+      case 'run_command': {
+        const cmdResult = await runCommand(input.cmd as string, { cwd });
+        result = JSON.stringify(cmdResult, null, 2);
+        break;
+      }
+
+      case 'write_file': {
+        if (!options.apply) {
+          return { error: 'File writes are disabled. Use --apply flag to enable.' };
+        }
+        const writeResult = await writeFile(
+          input.path as string,
+          input.content as string,
+          { cwd, allowWrite: true }
+        );
+        result = JSON.stringify(writeResult);
+        break;
+      }
+
+      case 'apply_patch': {
+        if (!options.apply) {
+          return { error: 'Patch application is disabled. Use --apply flag to enable.' };
+        }
+        const patchResult = await applyPatch(
+          input.path as string,
+          input.unifiedDiff as string,
+          { cwd, allowWrite: true }
+        );
+        result = JSON.stringify(patchResult);
+        break;
+      }
+
+      case 'ask_openai': {
+        const openaiKey = process.env.OPENAI_API_KEY;
+        const advisorResult = await askOpenAI(input.prompt as string, {
+          apiKey: openaiKey || '',
+        });
+        advisorResponses.push(advisorResult);
+        if (advisorResult.error) {
+          return { error: advisorResult.error };
+        }
+        result = advisorResult.response;
+        break;
+      }
+
+      case 'ask_gemini': {
+        const geminiKey = process.env.GEMINI_API_KEY;
+        const advisorResult = await askGemini(input.prompt as string, {
+          apiKey: geminiKey || '',
+        });
+        advisorResponses.push(advisorResult);
+        if (advisorResult.error) {
+          return { error: advisorResult.error };
+        }
+        result = advisorResult.response;
+        break;
+      }
+
+      default:
+        return { error: `Unknown tool: ${name}` };
+    }
+
+    // Record the tool call
+    toolCalls.push({
+      tool: name,
+      input,
+      output: result.substring(0, 1000), // Truncate for logging
+      timestamp,
+    });
+
+    return { content: result };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    return { error: errorMsg };
+  }
+}
+
+// Node: Gather initial context
 async function gatherContext(state: GraphState): Promise<Partial<GraphState>> {
   const cwd = state.options.cwd || process.cwd();
   const contextParts: string[] = [];
 
-  // Search for relevant files based on task
+  // Get git diff if available
   try {
-    const searchResult = await repoSearch(state.task.split(' ').slice(0, 3).join(' '), {
-      cwd,
-      maxResults: 10,
-    });
+    const diffResult = await gitDiff({ cwd });
+    if (diffResult.diff && !diffResult.diff.includes('No changes')) {
+      contextParts.push('Current git changes:');
+      contextParts.push(diffResult.diff.substring(0, 3000));
+    }
+  } catch {
+    // Ignore git errors
+  }
 
+  // Do a quick search based on task keywords
+  try {
+    const keywords = state.task.split(' ').slice(0, 3).join(' ');
+    const searchResult = await repoSearch(keywords, { cwd, maxResults: 5 });
     if (searchResult.matches.length > 0) {
-      contextParts.push('Relevant files found:');
-      for (const match of searchResult.matches.slice(0, 5)) {
+      contextParts.push('\nPotentially relevant files:');
+      for (const match of searchResult.matches) {
         contextParts.push(`  ${match.file}:${match.line} - ${match.preview}`);
       }
     }
@@ -58,203 +308,102 @@ async function gatherContext(state: GraphState): Promise<Partial<GraphState>> {
     // Ignore search errors
   }
 
-  // Get git diff if available
-  try {
-    const diffResult = await gitDiff({ cwd });
-    if (diffResult.diff && !diffResult.diff.includes('No changes')) {
-      contextParts.push('\nCurrent git changes:');
-      contextParts.push(diffResult.diff.substring(0, 2000));
-    }
-  } catch {
-    // Ignore git errors
-  }
-
   return {
     context: contextParts.join('\n'),
   };
 }
 
-// Node: Generate primary response (simulated - in real use, this is Claude via Claude Code)
-async function generatePrimaryResponse(state: GraphState): Promise<Partial<GraphState>> {
-  // In a real integration, this would be handled by Claude Code itself
-  // For now, we simulate a primary response that indicates the task analysis
-  const primaryResponse: LLMResponse = {
-    content: `Primary Analysis for: "${state.task}"
-
-Based on the repository context, here's my analysis:
-
-1. Understanding: I've analyzed the task and gathered context from the repository.
-
-2. Approach:
-   - First, we need to identify the relevant files and components
-   - Then, determine the best implementation strategy
-   - Finally, propose specific changes
-
-3. Considerations:
-   - This task ${state.context.length > 100 ? 'has relevant context' : 'may need more context'}
-   - The approach depends on existing code patterns
-
-4. Recommendation:
-   I suggest we proceed with a careful, incremental approach to this task.
-
-${state.context ? `\nContext gathered:\n${state.context.substring(0, 500)}...` : ''}`,
-    model: 'claude',
-    confidence: 0.85,
-    uncertaintyIndicators: [],
-  };
-
-  return {
-    primaryResponse,
-    messages: [...state.messages, new AIMessage(primaryResponse.content)],
-  };
-}
-
-// Decision function: Should we call secondary LLM?
-export function shouldCallSecondary(state: GraphState): boolean {
-  const { options, primaryResponse } = state;
-
-  // Explicit flags
-  if (options.when === 'always') return true;
-  if (options.when === 'never') return false;
-
-  // Auto mode: check conditions
-  if (options.when === 'auto' && primaryResponse) {
-    // Check for uncertainty indicators in primary response
-    const hasUncertainty = detectUncertainty(primaryResponse.content);
-    if (hasUncertainty) return true;
-
-    // Check for complexity indicators in the task
-    const hasComplexity = detectComplexity(state.task);
-    if (hasComplexity) return true;
-
-    // Check for error/test failure context
-    const hasErrors = detectErrors(state.context);
-    if (hasErrors) return true;
+// Node: Run Claude agent
+async function runClaudeAgent(state: GraphState): Promise<Partial<GraphState>> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      'ANTHROPIC_API_KEY is required.\n' +
+        'Please set it: export ANTHROPIC_API_KEY=your-key-here'
+    );
   }
 
-  return false;
-}
+  const tools = buildTools(state.options);
+  const toolCalls: ToolCallRecord[] = [...state.toolCalls];
+  const advisorResponses: AdvisorResponse[] = [...state.advisorResponses];
 
-// Helper: Detect uncertainty in text
-export function detectUncertainty(text: string): boolean {
-  return UNCERTAINTY_PATTERNS.some((pattern) => pattern.test(text));
-}
+  const claude = new ClaudeProvider({
+    apiKey,
+    tools,
+    onToolCall: async (name, input) => {
+      return executeToolCall(name, input, state.options, toolCalls, advisorResponses);
+    },
+  });
 
-// Helper: Detect complexity indicators
-export function detectComplexity(text: string): boolean {
-  return COMPLEXITY_PATTERNS.some((pattern) => pattern.test(text));
-}
-
-// Helper: Detect error/test failure context
-export function detectErrors(context: string): boolean {
-  const errorPatterns = [
-    /error/i,
-    /fail/i,
-    /exception/i,
-    /test.*fail/i,
-    /broken/i,
-  ];
-  return errorPatterns.some((pattern) => pattern.test(context));
-}
-
-// Node: Generate secondary response
-async function generateSecondaryResponse(state: GraphState): Promise<Partial<GraphState>> {
-  const provider = createProvider(state.options.modelSecondary);
-
-  const prompt = `Task: ${state.task}
-
-Primary LLM Analysis:
-${state.primaryResponse?.content || 'No primary analysis available'}
-
-Please provide:
-1. Your independent analysis of this task
-2. Any alternative approaches or considerations
-3. Points of agreement or disagreement with the primary analysis
-4. Specific recommendations`;
-
-  const secondaryResponse = await provider.generateResponse(prompt, state.context);
-
-  return {
-    secondaryResponse,
-    shouldCallSecondary: true,
-    messages: [...state.messages, new AIMessage(`[Secondary LLM]: ${secondaryResponse.content}`)],
-  };
-}
-
-// Node: Merge responses
-async function mergeResponses(state: GraphState): Promise<Partial<GraphState>> {
-  const { primaryResponse, secondaryResponse } = state;
-
-  let merged = '## Final Recommendation\n\n';
-
-  merged += '### Primary Analysis\n';
-  merged += primaryResponse?.content || 'No primary analysis';
-  merged += '\n\n';
-
-  if (secondaryResponse) {
-    merged += '### Secondary Opinion\n';
-    merged += secondaryResponse.content;
-    merged += '\n\n';
-
-    merged += '### Synthesis\n';
-    merged += 'After comparing both analyses:\n\n';
-    merged += '**Agreements:**\n';
-    merged += '- Both analyses provide valuable perspectives on the task\n';
-    merged += '- The core approach aligns with best practices\n\n';
-    merged += '**Key Considerations:**\n';
-    merged += '- Consider the trade-offs mentioned by both analyses\n';
-    merged += '- Proceed incrementally and verify each step\n\n';
+  // Build the task prompt with context
+  let taskPrompt = state.task;
+  if (state.context) {
+    taskPrompt = `## Repository Context\n${state.context}\n\n## Task\n${state.task}`;
   }
 
-  merged += '### Recommended Next Steps\n';
-  merged += '1. Review the analysis above\n';
-  merged += '2. Identify specific files that need changes\n';
-  merged += '3. Make changes incrementally\n';
-  merged += '4. Test after each change\n';
+  // Add info about available tools
+  const advisorInfo =
+    state.options.advisors.length > 0
+      ? `\n\nYou have access to advisor tools: ${state.options.advisors.join(', ')}. Use them when you want a second opinion.`
+      : '\n\nNo advisor tools are configured. Work independently.';
+
+  const applyInfo = state.options.apply
+    ? '\n\nFile modification is ENABLED. You can write files and apply patches.'
+    : '\n\nFile modification is DISABLED (dry-run mode). You can only read and analyze.';
+
+  taskPrompt += advisorInfo + applyInfo;
+
+  const response = await claude.generateResponse(taskPrompt);
 
   return {
-    mergedRecommendation: merged,
+    response,
+    toolCalls,
+    advisorResponses,
   };
-}
-
-// Conditional edge function
-function routeAfterPrimary(state: GraphState): string {
-  if (shouldCallSecondary(state)) {
-    return 'secondary';
-  }
-  return 'merge';
 }
 
 // Create the orchestrator graph
 export function createOrchestratorGraph() {
   const workflow = new StateGraph<GraphState>({
     channels: {
-      task: { value: (a: string, b?: string) => b ?? a, default: () => '' },
-      options: { value: (a: CliOptions, b?: CliOptions) => b ?? a, default: () => ({} as CliOptions) },
-      context: { value: (a: string, b?: string) => b ?? a, default: () => '' },
-      primaryResponse: { value: (a: LLMResponse | null, b?: LLMResponse | null) => b ?? a, default: () => null },
-      secondaryResponse: { value: (a: LLMResponse | null, b?: LLMResponse | null) => b ?? a, default: () => null },
-      shouldCallSecondary: { value: (a: boolean, b?: boolean) => b ?? a, default: () => false },
-      mergedRecommendation: { value: (a: string, b?: string) => b ?? a, default: () => '' },
-      messages: { value: (a: BaseMessage[], b?: BaseMessage[]) => b ?? a, default: () => [] },
+      task: {
+        value: (a: string, b?: string) => b ?? a,
+        default: () => '',
+      },
+      options: {
+        value: (a: CliOptions, b?: CliOptions) => b ?? a,
+        default: () => ({}) as CliOptions,
+      },
+      context: {
+        value: (a: string, b?: string) => b ?? a,
+        default: () => '',
+      },
+      response: {
+        value: (
+          a: { content: string; model: string } | null,
+          b?: { content: string; model: string } | null
+        ) => b ?? a,
+        default: () => null,
+      },
+      advisorResponses: {
+        value: (a: AdvisorResponse[], b?: AdvisorResponse[]) => b ?? a,
+        default: () => [],
+      },
+      toolCalls: {
+        value: (a: ToolCallRecord[], b?: ToolCallRecord[]) => b ?? a,
+        default: () => [],
+      },
     },
   });
 
   // Add nodes
   workflow.addNode('gather_context', gatherContext);
-  workflow.addNode('primary', generatePrimaryResponse);
-  workflow.addNode('secondary', generateSecondaryResponse);
-  workflow.addNode('merge', mergeResponses);
+  workflow.addNode('claude_agent', runClaudeAgent);
 
-  // Add edges
+  // Add edges - simple linear flow, Claude handles all decisions
   workflow.addEdge(START, 'gather_context');
-  workflow.addEdge('gather_context', 'primary');
-  workflow.addConditionalEdges('primary', routeAfterPrimary, {
-    secondary: 'secondary',
-    merge: 'merge',
-  });
-  workflow.addEdge('secondary', 'merge');
-  workflow.addEdge('merge', END);
+  workflow.addEdge('gather_context', 'claude_agent');
+  workflow.addEdge('claude_agent', END);
 
   return workflow.compile();
 }
@@ -265,16 +414,27 @@ export async function runOrchestrator(
   options: CliOptions
 ): Promise<OrchestratorState> {
   const graph = createOrchestratorGraph();
-  const initialState = createInitialState(task, options);
+
+  const initialState: GraphState = {
+    task,
+    options,
+    context: '',
+    response: null,
+    advisorResponses: [],
+    toolCalls: [],
+  };
 
   const result = await graph.invoke(initialState);
 
   return {
     task,
     options,
-    primaryResponse: result.primaryResponse ?? undefined,
-    secondaryResponse: result.secondaryResponse ?? undefined,
-    shouldCallSecondary: result.shouldCallSecondary,
-    mergedRecommendation: result.mergedRecommendation,
+    context: result.context,
+    response: result.response || { content: 'No response generated', model: 'unknown' },
+    advisorResponses: result.advisorResponses,
+    toolCalls: result.toolCalls,
   };
 }
+
+// Export types for testing
+export type { GraphState };

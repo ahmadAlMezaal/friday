@@ -1,14 +1,13 @@
 import { z } from 'zod';
 
-// CLI Options Schema
+// CLI Options Schema - v2 with Claude as primary
 export const CliOptionsSchema = z.object({
   task: z.string(),
-  modelPrimary: z.string().default('claude'),
-  modelSecondary: z.string().default('openai:gpt-4.1'),
-  when: z.enum(['auto', 'always', 'never']).default('auto'),
+  advisors: z.array(z.enum(['openai', 'gemini'])).default([]),
   apply: z.boolean().default(false),
   dryRun: z.boolean().default(true),
   cwd: z.string().optional(),
+  verbose: z.boolean().default(false),
 });
 
 export type CliOptions = z.infer<typeof CliOptionsSchema>;
@@ -21,16 +20,46 @@ export interface LLMResponse {
   uncertaintyIndicators?: string[];
 }
 
+// Advisor response (from secondary LLMs)
+export interface AdvisorResponse {
+  response: string;
+  model: string;
+  error?: string;
+}
+
+// Tool definitions for Claude agent
+export interface AgentTool {
+  name: string;
+  description: string;
+  inputSchema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+}
+
+// Tool execution result
+export interface ToolResult {
+  content?: string;
+  error?: string;
+}
+
 // Orchestration state
 export interface OrchestratorState {
   task: string;
   options: CliOptions;
-  primaryResponse?: LLMResponse;
-  secondaryResponse?: LLMResponse;
-  shouldCallSecondary: boolean;
-  mergedRecommendation?: string;
-  proposedPatches?: PatchProposal[];
-  executionResults?: ExecutionResult[];
+  context: string;
+  response: LLMResponse;
+  advisorResponses: AdvisorResponse[];
+  toolCalls: ToolCallRecord[];
+}
+
+// Record of tool calls made during execution
+export interface ToolCallRecord {
+  tool: string;
+  input: Record<string, unknown>;
+  output: string;
+  timestamp: Date;
 }
 
 // Patch types
@@ -81,32 +110,6 @@ export interface LLMProvider {
   generateResponse(prompt: string, context?: string): Promise<LLMResponse>;
 }
 
-// Uncertainty detection patterns
-export const UNCERTAINTY_PATTERNS = [
-  /not sure/i,
-  /might be/i,
-  /could be/i,
-  /unclear/i,
-  /uncertain/i,
-  /possibly/i,
-  /perhaps/i,
-  /I think/i,
-  /probably/i,
-  /may need/i,
-];
-
-// Architecture/refactor detection patterns
-export const COMPLEXITY_PATTERNS = [
-  /refactor/i,
-  /architecture/i,
-  /redesign/i,
-  /restructure/i,
-  /migrate/i,
-  /breaking change/i,
-  /significant change/i,
-  /major update/i,
-];
-
 // Allowed safe commands
 export const ALLOWED_COMMANDS = [
   'yarn test',
@@ -125,3 +128,7 @@ export const ALLOWED_COMMANDS = [
   'head',
   'tail',
 ];
+
+// Available advisor models
+export const AVAILABLE_ADVISORS = ['openai', 'gemini'] as const;
+export type AdvisorType = (typeof AVAILABLE_ADVISORS)[number];
