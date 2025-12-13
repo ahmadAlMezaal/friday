@@ -1,6 +1,8 @@
-# LLM Orchestrator v2
+# Friday
 
-A Claude-primary LLM orchestrator where **Claude is the single reasoning brain**. Claude can optionally consult advisor models (OpenAI GPT, Google Gemini) for second opinions, but Claude always makes the final decisions.
+A Claude-primary agent for software engineering tasks. **Claude is the single reasoning brain**. Claude can optionally consult advisor models (OpenAI GPT, Google Gemini) for second opinions, but Claude always makes the final decisions.
+
+Think of it as: **"gh CLI, but Claude-powered"**
 
 ## Key Concept: Claude as Primary Agent
 
@@ -37,10 +39,25 @@ A Claude-primary LLM orchestrator where **Claude is the single reasoning brain**
 
 ## Installation
 
+### Local Install (npm link)
+
 ```bash
 cd tools/llm-orchestrator
 yarn install
 yarn build
+npm link
+```
+
+Now you can run `friday` from anywhere:
+
+```bash
+friday
+```
+
+### Uninstall
+
+```bash
+npm unlink -g friday-cli
 ```
 
 ## Environment Variables
@@ -56,17 +73,27 @@ export GEMINI_API_KEY=your-gemini-api-key
 
 ## Usage
 
-### Basic Command
+### Quick Start
+
+```bash
+# Start interactive mode (default)
+friday
+
+# With file write access
+friday --workspace ./my-project --approve
+```
+
+### One-Shot Mode
 
 ```bash
 # Ask Claude for help (no advisors)
-yarn llm:help --task "explain what this function does"
+friday ask --task "explain what this function does"
 
 # Enable OpenAI as an advisor Claude can consult
-yarn llm:help --task "review this architecture" --advisors openai
+friday ask --task "review this architecture" --advisors openai
 
 # Enable multiple advisors
-yarn llm:help --task "suggest refactoring approach" --advisors openai,gemini
+friday ask --task "suggest refactoring approach" --advisors openai,gemini
 ```
 
 ### CLI Options
@@ -88,7 +115,7 @@ yarn llm:help --task "suggest refactoring approach" --advisors openai,gemini
 #### 1. Simple Analysis (Claude Only)
 
 ```bash
-yarn llm:help --task "summarize the current failing tests"
+friday ask --task "summarize the current failing tests"
 ```
 
 Claude analyzes the task independently without consulting any advisors.
@@ -96,7 +123,7 @@ Claude analyzes the task independently without consulting any advisors.
 #### 2. Architecture Decision with Second Opinion
 
 ```bash
-yarn llm:help --task "suggest an approach for implementing user authentication" --advisors openai
+friday ask --task "suggest an approach for implementing user authentication" --advisors openai
 ```
 
 Claude has access to the `ask_openai` tool and may choose to consult GPT for a second opinion on architectural decisions.
@@ -104,7 +131,7 @@ Claude has access to the `ask_openai` tool and may choose to consult GPT for a s
 #### 3. Complex Refactoring with Multiple Perspectives
 
 ```bash
-yarn llm:help --task "refactor the payment processing module" --advisors openai,gemini --verbose
+friday ask --task "refactor the payment processing module" --advisors openai,gemini --verbose
 ```
 
 Claude can consult both OpenAI and Gemini. Use `--verbose` to see which tools Claude used.
@@ -113,15 +140,15 @@ Claude can consult both OpenAI and Gemini. Use `--verbose` to see which tools Cl
 
 ```bash
 # Dry-run: see Claude's plan without making changes
-yarn llm:help --task "add input validation to the login function"
+friday ask --task "add input validation to the login function"
 
 # Approve mode: review and confirm each file change
-yarn llm:help --task "add input validation to the login function" \
+friday ask --task "add input validation to the login function" \
   --workspace ./src \
   --approve
 
 # Apply mode: allow immediate file changes
-yarn llm:help --task "add input validation to the login function" \
+friday ask --task "add input validation to the login function" \
   --workspace ./src \
   --apply
 ```
@@ -131,7 +158,7 @@ yarn llm:help --task "add input validation to the login function" \
 #### 5. Claude Asks GPT for a Second Opinion (Example Flow)
 
 ```bash
-yarn llm:help --task "review this error handling approach" --advisors openai
+friday ask --task "review this error handling approach" --advisors openai
 ```
 
 In this scenario:
@@ -145,52 +172,52 @@ In this scenario:
 
 ```bash
 # Limit to 5 tool calls and 3 agent turns
-yarn llm:help --task "explore this codebase" --maxToolCalls 5 --maxTurns 3
+friday ask --task "explore this codebase" --maxToolCalls 5 --maxTurns 3
 ```
 
 ### Additional Commands
 
 ```bash
 # Search repository
-yarn llm:help search "TODO"
+friday search "TODO"
 
 # Show git diff
-yarn llm:help diff
+friday diff
 
 # Run allowed command
-yarn llm:help run "yarn test"
+friday run "yarn test"
 ```
 
 ## Interactive Mode (REPL)
 
-Start an interactive session for multi-turn conversations with Claude:
+Interactive mode is the **default** when you run `friday` without arguments:
 
 ```bash
 # Start interactive session (read-only)
-yarn llm:interactive
-
-# Or via dev script
-yarn dev interactive
+friday
 
 # With write access (requires --workspace)
-yarn dev interactive --workspace ./my-project --approve
+friday --workspace ./my-project --approve
 
 # With advisors enabled
-yarn dev interactive --advisors openai --workspace ./my-project --apply
+friday --advisors openai --workspace ./my-project --apply
+
+# Or explicitly
+friday interactive
 ```
 
 ### Interactive Session Example
 
 ```
 ========================================================
-  LLM Orchestrator - Interactive Mode
+  Friday - Claude-primary Agent
 ========================================================
 
 Workspace: /Users/you/projects/my-project
 Mode: approve
 Type !help for commands, !exit to quit
 
-llm> plan a todo list website
+friday> plan a todo list website
 Claude is thinking...
 
 Claude:
@@ -199,7 +226,7 @@ I'll help you plan a todo list website. Here's the architecture:
 2. Local storage for persistence
 ...
 
-llm> create the main App component
+friday> create the main App component
 Claude is thinking...
 
 Claude:
@@ -208,18 +235,18 @@ I'll create the App component for you.
 Apply this change? [y/N]: y
 File written: src/App.tsx
 
-llm> !diff
+friday> !diff
 Git diff:
 [Shows current uncommitted changes]
 
-llm> !status
+friday> !status
 Session status:
   Workspace: /Users/you/projects/my-project
   Mode: approve
   Messages: 4
   Duration: 2m 30s
 
-llm> !exit
+friday> !exit
 Goodbye!
 ```
 
@@ -247,17 +274,15 @@ Goodbye!
 | `--maxToolCalls <n>` | Max tool calls per task | `20` |
 | `--maxTurns <n>` | Max agent turns per task | `10` |
 
-### What Interactive Mode Is NOT
+### What Friday Is NOT
 
-This is a CLI-first, safe, Claude-primary agent runner. It is **not**:
+Friday is a CLI-first, safe, Claude-primary agent runner. It is **not**:
 
 - An IDE replacement (no editor integration)
 - A chat UI (no web interface)
 - A persistent agent (no background processes)
 - A code indexer (no embeddings or vector DBs)
 - Cursor/Copilot (no automatic file watching or edits)
-
-Think of it as: **"gh CLI, but Claude-powered"**
 
 ### Session Behavior
 
@@ -273,10 +298,10 @@ Run as an MCP server for integration with Claude Code:
 
 ```bash
 # Start MCP server (read-only)
-yarn llm:help mcp
+friday mcp
 
 # Start MCP server with write access (requires --workspace)
-yarn llm:help mcp --workspace ./my-project --apply
+friday mcp --workspace ./my-project --apply
 ```
 
 ## Architecture
@@ -374,24 +399,20 @@ The tool distinguishes between two directory concepts:
 | **Workspace** | `--workspace` | Where file writes are allowed (write sandbox) |
 | **CWD** | `--cwd` | Where read/search operations occur |
 
-**Why this matters**: When running the tool via Yarn with `--cwd`, Yarn changes `process.cwd()` to the tool's installation directory. Without an explicit workspace, file writes would incorrectly go into the tool's directory instead of your intended target.
+**Why this matters**: The workspace flag ensures file writes go to the correct location relative to where you invoked the command.
 
 **Example**:
 ```bash
 # Running from ~/projects
-yarn --cwd ~/tools/llm-orchestrator dev \
-  --task "create a todo website" \
-  --workspace ../../playground/todo-website \
+friday ask --task "create a todo website" \
+  --workspace ./playground/todo-website \
   --apply
 ```
 
 In this case:
-- Yarn's `--cwd` sets the tool's execution context to `~/tools/llm-orchestrator`
-- `--workspace ../../playground/todo-website` resolves to `~/playground/todo-website`
-- All file writes are sandboxed to `~/playground/todo-website`
+- `--workspace ./playground/todo-website` resolves to `~/projects/playground/todo-website`
+- All file writes are sandboxed to that directory
 - Attempting to write outside the workspace fails with: `Attempted write outside workspace`
-
-**Without `--workspace`**, file writes would go to `~/tools/llm-orchestrator/playground/todo-website`, which is the wrong location.
 
 ### Allowed Commands
 
@@ -404,8 +425,11 @@ For safety, only these commands can be executed:
 ## Development
 
 ```bash
-# Run in development mode
-yarn dev --task "your task here"
+# Run in development mode (interactive)
+yarn dev
+
+# Run one-shot mode in dev
+yarn dev ask --task "your task here"
 
 # Run tests
 yarn test
@@ -418,19 +442,10 @@ yarn typecheck
 
 # Build
 yarn build
+
+# Run built version
+yarn friday
 ```
-
-## Migration from v1
-
-If you were using v1 of this tool:
-
-| v1 Flag | v2 Equivalent |
-|---------|---------------|
-| `--modelPrimary` | Removed (always Claude) |
-| `--modelSecondary` | Use `--advisors openai` |
-| `--when auto` | Removed (Claude decides) |
-| `--when always` | Use `--advisors openai` |
-| `--when never` | Don't pass `--advisors` |
 
 ## License
 

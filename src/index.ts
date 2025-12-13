@@ -16,14 +16,14 @@ const INVOCATION_CWD = process.cwd();
 const program = new Command();
 
 program
-  .name('llm-help')
-  .description('Claude-primary LLM orchestrator with advisor models')
+  .name('friday')
+  .description('Friday - Claude-primary agent for software engineering tasks')
   .version('2.0.0');
 
-// Main help command
+// One-shot ask command (for --task mode)
 program
-  .command('ask', { isDefault: true })
-  .description('Ask Claude for help with a task (Claude decides when to consult advisors)')
+  .command('ask')
+  .description('Ask Claude for help with a task (one-shot mode)')
   .requiredOption('--task <prompt>', 'The task or question to analyze')
   .option(
     '--advisors <models>',
@@ -61,7 +61,7 @@ program
           'The --workspace flag is required when using --apply or --approve.\n' +
             'This ensures file writes are sandboxed to an explicit directory.\n\n' +
             'Example:\n' +
-            '  yarn dev --task "create a website" --workspace ./my-project --apply'
+            '  friday ask --task "create a website" --workspace ./my-project --apply'
         );
       }
 
@@ -90,7 +90,7 @@ program
 
       // Print header
       console.log(chalk.cyan('\n╔══════════════════════════════════════════════════════╗'));
-      console.log(chalk.cyan('║   LLM Orchestrator v2 - Claude as Primary Agent      ║'));
+      console.log(chalk.cyan('║         Friday - Claude-primary Agent                 ║'));
       console.log(chalk.cyan('╚══════════════════════════════════════════════════════╝\n'));
 
       console.log(chalk.bold('Task:'), options.task);
@@ -189,7 +189,7 @@ program
         'Error: The --workspace flag is required when using --apply.\n' +
           'This ensures file writes are sandboxed to an explicit directory.\n\n' +
           'Example:\n' +
-          '  yarn dev mcp --workspace ./my-project --apply'
+          '  friday mcp --workspace ./my-project --apply'
       );
       process.exit(1);
     }
@@ -276,11 +276,11 @@ program
     }
   });
 
-// Interactive mode command
+// Interactive mode command (default when no command given)
 program
-  .command('interactive')
+  .command('interactive', { isDefault: true })
   .alias('i')
-  .description('Start an interactive REPL session with Claude')
+  .description('Start an interactive REPL session with Claude (default)')
   .option(
     '--advisors <models>',
     'Comma-separated list of advisor models Claude can consult (openai,gemini)',
@@ -317,7 +317,7 @@ program
           'The --workspace flag is required when using --apply or --approve.\n' +
             'This ensures file writes are sandboxed to an explicit directory.\n\n' +
             'Example:\n' +
-            '  yarn dev interactive --workspace ./my-project --approve'
+            '  friday --workspace ./my-project --approve'
         );
       }
 

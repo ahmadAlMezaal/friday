@@ -289,7 +289,7 @@ export async function runInteractiveSession(options: InteractiveOptions): Promis
 
   // Print header
   console.log(chalk.cyan('\n' + '='.repeat(56)));
-  console.log(chalk.cyan.bold('  LLM Orchestrator - Interactive Mode'));
+  console.log(chalk.cyan.bold('  Friday - Claude-primary Agent'));
   console.log(chalk.cyan('='.repeat(56)));
   console.log('');
   console.log(chalk.white('Workspace: ') + (session.workspace || chalk.gray('(none - read-only)')));
@@ -301,7 +301,7 @@ export async function runInteractiveSession(options: InteractiveOptions): Promis
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: chalk.cyan('llm> '),
+    prompt: chalk.cyan('friday> '),
   });
 
   // Handle line input

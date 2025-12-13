@@ -1,16 +1,17 @@
 {
-  "name": "llm-orchestrator",
+  "name": "friday-cli",
   "version": "2.0.0",
-  "description": "Claude-primary LLM orchestrator with advisor models and MCP tools",
+  "description": "Friday - Claude-primary agent for software engineering tasks",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "llm-help": "./dist/index.js"
+    "friday": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
+    "friday": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
