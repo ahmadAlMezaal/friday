@@ -8,6 +8,7 @@ export const CliOptionsSchema = z.object({
   approve: z.boolean().default(false),
   dryRun: z.boolean().default(true),
   cwd: z.string().optional(),
+  workspace: z.string().optional(), // Explicit write sandbox (required if --apply or --approve)
   verbose: z.boolean().default(false),
   maxToolCalls: z.number().int().positive().default(20),
   maxTurns: z.number().int().positive().default(10),

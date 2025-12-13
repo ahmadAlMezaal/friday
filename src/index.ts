@@ -6,6 +6,11 @@ import { CliOptionsSchema, CliOptions, AVAILABLE_ADVISORS } from './types.js';
 import { loadConfig, validateConfig } from './config.js';
 import { runOrchestrator } from './router.js';
 import { runMCPServer } from './mcp/server.js';
+import { resolveWorkspace } from './workspace.js';
+
+// Capture the original process.cwd() BEFORE any Yarn --cwd override takes effect
+// This is the directory from which the user invoked the command
+const INVOCATION_CWD = process.cwd();
 
 const program = new Command();
 
@@ -27,7 +32,8 @@ program
   .option('--apply', 'Allow file changes (default: dry-run)', false)
   .option('--approve', 'Show patches and require y/N confirmation before applying', false)
   .option('--verbose', 'Show detailed tool call information', false)
-  .option('--cwd <path>', 'Working directory')
+  .option('--cwd <path>', 'Working directory for read/search operations')
+  .option('--workspace <path>', 'Directory where file writes are allowed (required with --apply or --approve)')
   .option('--maxToolCalls <n>', 'Maximum tool calls allowed (default: 20)', '20')
   .option('--maxTurns <n>', 'Maximum agent loop turns (default: 10)', '10')
   .action(async (opts) => {
@@ -47,6 +53,22 @@ program
         }
       }
 
+      // Fail-fast: require --workspace when --apply or --approve is set
+      const writesEnabled = opts.apply || opts.approve;
+      if (writesEnabled && !opts.workspace) {
+        throw new Error(
+          'The --workspace flag is required when using --apply or --approve.\n' +
+            'This ensures file writes are sandboxed to an explicit directory.\n\n' +
+            'Example:\n' +
+            '  yarn dev --task "create a website" --workspace ./my-project --apply'
+        );
+      }
+
+      // Resolve workspace to absolute path (relative to invocation directory, not tool directory)
+      const resolvedWorkspace = opts.workspace
+        ? resolveWorkspace(opts.workspace, INVOCATION_CWD)
+        : undefined;
+
       // Parse and validate options
       const options: CliOptions = CliOptionsSchema.parse({
         task: opts.task,
@@ -54,7 +76,8 @@ program
         apply: opts.apply,
         approve: opts.approve,
         dryRun: !opts.apply && !opts.approve,
-        cwd: opts.cwd || process.cwd(),
+        cwd: opts.cwd || INVOCATION_CWD,
+        workspace: resolvedWorkspace,
         verbose: opts.verbose,
         maxToolCalls: parseInt(opts.maxToolCalls, 10),
         maxTurns: parseInt(opts.maxTurns, 10),
@@ -77,11 +100,17 @@ program
           : chalk.gray('none (Claude works independently)')
       );
       const modeLabel = options.apply
-        ? chalk.green('Apply (immediate)')
+        ? chalk.green('apply')
         : options.approve
-          ? chalk.cyan('Approve (confirm each)')
-          : chalk.yellow('Dry-run (read-only)');
+          ? chalk.cyan('approve')
+          : chalk.yellow('dry-run');
       console.log(chalk.bold('Mode:'), modeLabel);
+      console.log(
+        chalk.bold('Workspace:'),
+        options.workspace
+          ? chalk.white(options.workspace)
+          : chalk.gray('(none - read-only mode)')
+      );
       console.log(chalk.bold('Limits:'), `${options.maxToolCalls} tool calls, ${options.maxTurns} turns`);
       console.log('');
 
@@ -147,14 +176,33 @@ program
   .command('mcp')
   .description('Run as MCP server (for integration with Claude Code)')
   .option('--apply', 'Allow file changes', false)
-  .option('--cwd <path>', 'Working directory')
+  .option('--cwd <path>', 'Working directory for read/search operations')
+  .option('--workspace <path>', 'Directory where file writes are allowed (required with --apply)')
   .action(async (opts) => {
-    const cwd = opts.cwd || process.cwd();
+    const cwd = opts.cwd || INVOCATION_CWD;
     const allowWrite = opts.apply || false;
 
-    console.error(`Starting MCP server (cwd: ${cwd}, write: ${allowWrite})`);
+    // Fail-fast: require --workspace when --apply is set
+    if (allowWrite && !opts.workspace) {
+      console.error(
+        'Error: The --workspace flag is required when using --apply.\n' +
+          'This ensures file writes are sandboxed to an explicit directory.\n\n' +
+          'Example:\n' +
+          '  yarn dev mcp --workspace ./my-project --apply'
+      );
+      process.exit(1);
+    }
 
-    await runMCPServer({ cwd, allowWrite });
+    const workspace = opts.workspace
+      ? resolveWorkspace(opts.workspace, INVOCATION_CWD)
+      : undefined;
+
+    console.error(`Starting MCP server`);
+    console.error(`  cwd: ${cwd}`);
+    console.error(`  workspace: ${workspace || '(none - read-only)'}`);
+    console.error(`  write: ${allowWrite}`);
+
+    await runMCPServer({ cwd, allowWrite, workspace });
   });
 
 // Search command

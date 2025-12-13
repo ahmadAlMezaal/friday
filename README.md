@@ -77,8 +77,9 @@ yarn llm:help --task "suggest refactoring approach" --advisors openai,gemini
 | `--advisors <list>` | Comma-separated advisors: `openai,gemini` | `[]` (none) |
 | `--apply` | Allow file changes (immediate) | `false` |
 | `--approve` | Allow file changes (confirm each) | `false` |
+| `--workspace <path>` | Directory where file writes are allowed | Required with `--apply`/`--approve` |
 | `--verbose` | Show detailed tool call information | `false` |
-| `--cwd <path>` | Working directory | Current directory |
+| `--cwd <path>` | Working directory for read/search operations | Current directory |
 | `--maxToolCalls <n>` | Maximum tool calls allowed | `20` |
 | `--maxTurns <n>` | Maximum agent loop turns | `10` |
 
@@ -115,11 +116,17 @@ Claude can consult both OpenAI and Gemini. Use `--verbose` to see which tools Cl
 yarn llm:help --task "add input validation to the login function"
 
 # Approve mode: review and confirm each file change
-yarn llm:help --task "add input validation to the login function" --approve
+yarn llm:help --task "add input validation to the login function" \
+  --workspace ./src \
+  --approve
 
 # Apply mode: allow immediate file changes
-yarn llm:help --task "add input validation to the login function" --apply
+yarn llm:help --task "add input validation to the login function" \
+  --workspace ./src \
+  --apply
 ```
+
+**Important**: The `--workspace` flag is required when using `--apply` or `--approve`. This ensures file writes are sandboxed to an explicit directory.
 
 #### 5. Claude Asks GPT for a Second Opinion (Example Flow)
 
@@ -162,8 +169,8 @@ Run as an MCP server for integration with Claude Code:
 # Start MCP server (read-only)
 yarn llm:help mcp
 
-# Start MCP server with write access
-yarn llm:help mcp --apply
+# Start MCP server with write access (requires --workspace)
+yarn llm:help mcp --workspace ./my-project --apply
 ```
 
 ## Architecture
@@ -246,9 +253,37 @@ This is NOT Claude-driven tool usage. It's a fixed pre-flight step to reduce lat
 2. **Advisors are text-only**: They receive prompts and return text responses
 3. **No direct tool access for advisors**: Only Claude can use MCP tools
 4. **File writes require explicit flag**: `--apply` (immediate) or `--approve` (confirm)
-5. **Command allowlist**: Only safe commands can be executed
-6. **Budget guards**: Configurable limits prevent runaway costs
-7. **Path traversal protection**: File operations restricted to working directory
+5. **Workspace sandboxing**: All file writes are restricted to the explicit `--workspace` directory
+6. **Command allowlist**: Only safe commands can be executed
+7. **Budget guards**: Configurable limits prevent runaway costs
+
+### Workspace vs Process CWD
+
+The tool distinguishes between two directory concepts:
+
+| Concept | Flag | Purpose |
+|---------|------|---------|
+| **Workspace** | `--workspace` | Where file writes are allowed (write sandbox) |
+| **CWD** | `--cwd` | Where read/search operations occur |
+
+**Why this matters**: When running the tool via Yarn with `--cwd`, Yarn changes `process.cwd()` to the tool's installation directory. Without an explicit workspace, file writes would incorrectly go into the tool's directory instead of your intended target.
+
+**Example**:
+```bash
+# Running from ~/projects
+yarn --cwd ~/tools/llm-orchestrator dev \
+  --task "create a todo website" \
+  --workspace ../../playground/todo-website \
+  --apply
+```
+
+In this case:
+- Yarn's `--cwd` sets the tool's execution context to `~/tools/llm-orchestrator`
+- `--workspace ../../playground/todo-website` resolves to `~/playground/todo-website`
+- All file writes are sandboxed to `~/playground/todo-website`
+- Attempting to write outside the workspace fails with: `Attempted write outside workspace`
+
+**Without `--workspace`**, file writes would go to `~/tools/llm-orchestrator/playground/todo-website`, which is the wrong location.
 
 ### Allowed Commands
 

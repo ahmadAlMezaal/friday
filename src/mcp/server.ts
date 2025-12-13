@@ -16,6 +16,7 @@ import {
 export interface MCPServerOptions {
   cwd: string;
   allowWrite: boolean;
+  workspace?: string; // The explicit write sandbox
 }
 
 export function createMCPServer(options: MCPServerOptions): Server {
@@ -146,7 +147,11 @@ export function createMCPServer(options: MCPServerOptions): Server {
           const result = await writeFile(
             args?.path as string,
             args?.content as string,
-            { cwd: options.cwd, allowWrite: options.allowWrite }
+            {
+              cwd: options.cwd,
+              workspace: options.workspace,
+              allowWrite: options.allowWrite,
+            }
           );
           return { content: [{ type: 'text', text: JSON.stringify(result) }] };
         }
@@ -155,7 +160,11 @@ export function createMCPServer(options: MCPServerOptions): Server {
           const result = await applyPatch(
             args?.path as string,
             args?.unifiedDiff as string,
-            { cwd: options.cwd, allowWrite: options.allowWrite }
+            {
+              cwd: options.cwd,
+              workspace: options.workspace,
+              allowWrite: options.allowWrite,
+            }
           );
           return { content: [{ type: 'text', text: JSON.stringify(result) }] };
         }

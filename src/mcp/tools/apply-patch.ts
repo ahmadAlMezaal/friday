@@ -1,11 +1,12 @@
 import { readFile as fsReadFile, writeFile as fsWriteFile } from 'fs/promises';
-import { join, isAbsolute } from 'path';
 import { applyPatch as diffApplyPatch } from 'diff';
 import { createInterface } from 'readline';
 import { OperationResult } from '../../types.js';
+import { resolvePathInWorkspace, WorkspaceError } from '../../workspace.js';
 
 export interface ApplyPatchOptions {
   cwd: string;
+  workspace?: string; // The explicit write sandbox
   allowWrite: boolean;
   requireApproval?: boolean;
 }
@@ -37,14 +38,26 @@ export async function applyPatch(
     };
   }
 
-  const fullPath = isAbsolute(path) ? path : join(options.cwd, path);
-
-  // Security: prevent path traversal outside cwd
-  if (!fullPath.startsWith(options.cwd)) {
+  // Safety check: require workspace when writes are enabled
+  if (!options.workspace) {
     return {
       ok: false,
-      message: 'Access denied: path must be within working directory',
+      message: 'No workspace configured. Use --workspace to specify where file writes are allowed.',
     };
+  }
+
+  // Resolve path within workspace and enforce containment
+  let fullPath: string;
+  try {
+    fullPath = resolvePathInWorkspace(path, options.workspace);
+  } catch (error) {
+    if (error instanceof WorkspaceError) {
+      return {
+        ok: false,
+        message: error.message,
+      };
+    }
+    throw error;
   }
 
   try {

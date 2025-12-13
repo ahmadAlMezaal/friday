@@ -222,7 +222,12 @@ async function executeToolCall(
         const writeResult = await writeFile(
           input.path as string,
           input.content as string,
-          { cwd, allowWrite: options.apply, requireApproval: options.approve }
+          {
+            cwd,
+            workspace: options.workspace,
+            allowWrite: options.apply,
+            requireApproval: options.approve,
+          }
         );
         result = JSON.stringify(writeResult);
         break;
@@ -235,7 +240,12 @@ async function executeToolCall(
         const patchResult = await applyPatch(
           input.path as string,
           input.unifiedDiff as string,
-          { cwd, allowWrite: options.apply, requireApproval: options.approve }
+          {
+            cwd,
+            workspace: options.workspace,
+            allowWrite: options.apply,
+            requireApproval: options.approve,
+          }
         );
         result = JSON.stringify(patchResult);
         break;
