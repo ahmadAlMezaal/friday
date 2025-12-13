@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
-    "llm:help": "node dist/index.js"
+    "llm:help": "node dist/index.js",
+    "llm:interactive": "tsx src/index.ts interactive"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",

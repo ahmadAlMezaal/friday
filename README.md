@@ -161,6 +161,112 @@ yarn llm:help diff
 yarn llm:help run "yarn test"
 ```
 
+## Interactive Mode (REPL)
+
+Start an interactive session for multi-turn conversations with Claude:
+
+```bash
+# Start interactive session (read-only)
+yarn llm:interactive
+
+# Or via dev script
+yarn dev interactive
+
+# With write access (requires --workspace)
+yarn dev interactive --workspace ./my-project --approve
+
+# With advisors enabled
+yarn dev interactive --advisors openai --workspace ./my-project --apply
+```
+
+### Interactive Session Example
+
+```
+========================================================
+  LLM Orchestrator - Interactive Mode
+========================================================
+
+Workspace: /Users/you/projects/my-project
+Mode: approve
+Type !help for commands, !exit to quit
+
+llm> plan a todo list website
+Claude is thinking...
+
+Claude:
+I'll help you plan a todo list website. Here's the architecture:
+1. React frontend with TypeScript
+2. Local storage for persistence
+...
+
+llm> create the main App component
+Claude is thinking...
+
+Claude:
+I'll create the App component for you.
+[Shows diff]
+Apply this change? [y/N]: y
+File written: src/App.tsx
+
+llm> !diff
+Git diff:
+[Shows current uncommitted changes]
+
+llm> !status
+Session status:
+  Workspace: /Users/you/projects/my-project
+  Mode: approve
+  Messages: 4
+  Duration: 2m 30s
+
+llm> !exit
+Goodbye!
+```
+
+### Built-in Commands
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `!exit` | `!quit`, `!q` | Exit the interactive session |
+| `!help` | `!h`, `!?` | Show available commands |
+| `!diff` | `!d` | Show current git diff |
+| `!status` | `!s` | Show session status (workspace, mode, message count) |
+| `!run <cmd>` | `!r` | Run an allowed command |
+| `!clear` | `!c` | Clear conversation history |
+
+### Interactive Mode Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--workspace <path>` | Directory where file writes are allowed | None (read-only) |
+| `--apply` | Allow file changes (immediate) | `false` |
+| `--approve` | Allow file changes (confirm each) | `false` |
+| `--advisors <list>` | Comma-separated advisors: `openai,gemini` | `[]` (none) |
+| `--verbose` | Show tool call details | `false` |
+| `--cwd <path>` | Working directory for reads | Current directory |
+| `--maxToolCalls <n>` | Max tool calls per task | `20` |
+| `--maxTurns <n>` | Max agent turns per task | `10` |
+
+### What Interactive Mode Is NOT
+
+This is a CLI-first, safe, Claude-primary agent runner. It is **not**:
+
+- An IDE replacement (no editor integration)
+- A chat UI (no web interface)
+- A persistent agent (no background processes)
+- A code indexer (no embeddings or vector DBs)
+- Cursor/Copilot (no automatic file watching or edits)
+
+Think of it as: **"gh CLI, but Claude-powered"**
+
+### Session Behavior
+
+- **Ephemeral**: Session exists only while the process runs
+- **No persistence**: Conversation history is not saved to disk
+- **No background tasks**: All operations are synchronous
+- **Explicit writes**: File changes require `--apply` or per-action confirmation
+- **Workspace sandboxing**: All writes are contained to `--workspace`
+
 ## MCP Server Mode
 
 Run as an MCP server for integration with Claude Code:
@@ -179,8 +285,10 @@ yarn llm:help mcp --workspace ./my-project --apply
 src/
 ├── index.ts           # CLI entrypoint
 ├── router.ts          # LangGraph orchestration (Claude agent loop)
+├── interactive.ts     # Interactive REPL mode
 ├── types.ts           # TypeScript types and schemas
 ├── config.ts          # Configuration management
+├── workspace.ts       # Workspace sandboxing utilities
 ├── providers/
 │   ├── index.ts       # Provider exports
 │   ├── claude.ts      # Claude provider (primary agent)

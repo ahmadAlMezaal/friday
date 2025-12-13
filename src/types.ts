@@ -136,3 +136,25 @@ export const ALLOWED_COMMANDS = [
 // Available advisor models
 export const AVAILABLE_ADVISORS = ['openai', 'gemini'] as const;
 export type AdvisorType = (typeof AVAILABLE_ADVISORS)[number];
+
+// Interactive session types (REPL mode)
+export interface SessionMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+}
+
+export interface InteractiveSession {
+  messages: SessionMessage[];
+  workspace: string | undefined;
+  cwd: string;
+  options: Omit<CliOptions, 'task'>; // task is per-message in interactive mode
+  startedAt: Date;
+}
+
+// Interactive mode CLI options (no task required upfront)
+export const InteractiveOptionsSchema = CliOptionsSchema.omit({ task: true }).extend({
+  task: z.string().optional(),
+});
+
+export type InteractiveOptions = z.infer<typeof InteractiveOptionsSchema>;

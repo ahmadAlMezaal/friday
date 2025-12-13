@@ -2,11 +2,12 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { CliOptionsSchema, CliOptions, AVAILABLE_ADVISORS } from './types.js';
+import { CliOptionsSchema, CliOptions, InteractiveOptionsSchema, AVAILABLE_ADVISORS } from './types.js';
 import { loadConfig, validateConfig } from './config.js';
 import { runOrchestrator } from './router.js';
 import { runMCPServer } from './mcp/server.js';
 import { resolveWorkspace } from './workspace.js';
+import { runInteractiveSession } from './interactive.js';
 
 // Capture the original process.cwd() BEFORE any Yarn --cwd override takes effect
 // This is the directory from which the user invoked the command
@@ -259,9 +260,9 @@ program
     const result = await runCommand(cmd, { cwd });
 
     if (result.exitCode === 0) {
-      console.log(chalk.green('✓ Command succeeded'));
+      console.log(chalk.green('Command succeeded'));
     } else {
-      console.log(chalk.red(`✗ Command failed (exit code: ${result.exitCode})`));
+      console.log(chalk.red(`Command failed (exit code: ${result.exitCode})`));
     }
 
     if (result.stdout) {
@@ -272,6 +273,81 @@ program
     if (result.stderr) {
       console.log(chalk.bold('\nStderr:'));
       console.log(result.stderr);
+    }
+  });
+
+// Interactive mode command
+program
+  .command('interactive')
+  .alias('i')
+  .description('Start an interactive REPL session with Claude')
+  .option(
+    '--advisors <models>',
+    'Comma-separated list of advisor models Claude can consult (openai,gemini)',
+    ''
+  )
+  .option('--apply', 'Allow file changes (default: dry-run)', false)
+  .option('--approve', 'Show patches and require y/N confirmation before applying', false)
+  .option('--verbose', 'Show detailed tool call information', false)
+  .option('--cwd <path>', 'Working directory for read/search operations')
+  .option('--workspace <path>', 'Directory where file writes are allowed (required with --apply or --approve)')
+  .option('--maxToolCalls <n>', 'Maximum tool calls allowed per task (default: 20)', '20')
+  .option('--maxTurns <n>', 'Maximum agent loop turns per task (default: 10)', '10')
+  .action(async (opts) => {
+    try {
+      // Parse advisors from comma-separated string
+      const advisorList = opts.advisors
+        ? opts.advisors.split(',').map((s: string) => s.trim().toLowerCase())
+        : [];
+
+      // Validate advisor names
+      for (const advisor of advisorList) {
+        if (!AVAILABLE_ADVISORS.includes(advisor as 'openai' | 'gemini')) {
+          throw new Error(
+            `Unknown advisor: ${advisor}\n` +
+              `Available advisors: ${AVAILABLE_ADVISORS.join(', ')}`
+          );
+        }
+      }
+
+      // Fail-fast: require --workspace when --apply or --approve is set
+      const writesEnabled = opts.apply || opts.approve;
+      if (writesEnabled && !opts.workspace) {
+        throw new Error(
+          'The --workspace flag is required when using --apply or --approve.\n' +
+            'This ensures file writes are sandboxed to an explicit directory.\n\n' +
+            'Example:\n' +
+            '  yarn dev interactive --workspace ./my-project --approve'
+        );
+      }
+
+      // Resolve workspace to absolute path
+      const resolvedWorkspace = opts.workspace
+        ? resolveWorkspace(opts.workspace, INVOCATION_CWD)
+        : undefined;
+
+      // Parse and validate options
+      const options = InteractiveOptionsSchema.parse({
+        advisors: advisorList,
+        apply: opts.apply,
+        approve: opts.approve,
+        dryRun: !opts.apply && !opts.approve,
+        cwd: opts.cwd || INVOCATION_CWD,
+        workspace: resolvedWorkspace,
+        verbose: opts.verbose,
+        maxToolCalls: parseInt(opts.maxToolCalls, 10),
+        maxTurns: parseInt(opts.maxTurns, 10),
+      });
+
+      // Load and validate config
+      const config = loadConfig({ ...options, task: '' });
+      validateConfig(config);
+
+      // Start interactive session
+      await runInteractiveSession(options);
+    } catch (error) {
+      console.error(chalk.red('\nError:'), error instanceof Error ? error.message : error);
+      process.exit(1);
     }
   });
 
