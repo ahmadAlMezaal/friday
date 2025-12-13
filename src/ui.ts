@@ -438,3 +438,79 @@ export function renderContextGathering(): string {
 export function clearLine(): void {
   process.stdout.write('\r\x1b[K');
 }
+
+// ============================================================================
+// Execution Phase Rendering
+// ============================================================================
+
+/**
+ * Render phase transition banner
+ */
+export function renderPhaseTransition(
+  phase: 'planning' | 'proposed_changes' | 'writing' | 'completed',
+  details?: { fileCount?: number }
+): string {
+  const width = 50;
+
+  switch (phase) {
+    case 'planning':
+      return colors.primary(`\n   ${symbols.thinking} Planning phase started...`);
+
+    case 'proposed_changes':
+      return colors.secondary.bold(`
+${symbols.horizontal.repeat(width)}
+${symbols.star}  PROPOSED CHANGES
+${symbols.horizontal.repeat(width)}`);
+
+    case 'writing': {
+      const fileInfo = details?.fileCount ? ` (${details.fileCount} file${details.fileCount === 1 ? '' : 's'})` : '';
+      return colors.success.bold(`
+${symbols.horizontal.repeat(width)}
+${symbols.gear}  WRITING PHASE${fileInfo}
+${symbols.horizontal.repeat(width)}`);
+    }
+
+    case 'completed':
+      return colors.success(`\n   ${symbols.check} All changes applied successfully\n`);
+
+    default:
+      return '';
+  }
+}
+
+/**
+ * Render a "ready to write" announcement that Claude should use
+ */
+export function renderReadyToWrite(files: Array<{ path: string; action: 'create' | 'modify'; description: string }>): string {
+  const lines: string[] = [];
+  const divider = symbols.horizontal.repeat(50);
+
+  lines.push('');
+  lines.push(colors.primary.bold(divider));
+  lines.push(colors.primary.bold(`${symbols.star}  I am ready to write the following files:`));
+  lines.push(colors.primary.bold(divider));
+  lines.push('');
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const actionLabel = file.action === 'create'
+      ? colors.success('(create)')
+      : colors.warning('(modify)');
+    lines.push(`   ${i + 1}. ${colors.text(file.path)} ${actionLabel}`);
+    lines.push(`      ${colors.textDim(file.description)}`);
+  }
+
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Render mode-specific hint about what will happen
+ */
+export function renderWriteModeHint(mode: 'apply' | 'approve'): string {
+  if (mode === 'apply') {
+    return colors.warning(`   ${symbols.bullet} Mode: --apply (changes will be written immediately)\n`);
+  }
+  return colors.secondary(`   ${symbols.bullet} Mode: --approve (you will be prompted for each file)\n`);
+}

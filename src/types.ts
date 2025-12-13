@@ -159,6 +159,26 @@ export const InteractiveOptionsSchema = CliOptionsSchema.omit({ task: true }).ex
 
 export type InteractiveOptions = z.infer<typeof InteractiveOptionsSchema>;
 
+// Execution phases for clear workflow
+export type ExecutionPhase =
+  | 'planning'          // Claude is analyzing and planning
+  | 'proposed_changes'  // Claude has listed proposed changes
+  | 'approval'          // Waiting for user approval (--approve mode)
+  | 'writing'           // Actively writing files
+  | 'completed';        // All changes applied
+
+// Proposed file change (collected before writing)
+export interface ProposedChange {
+  path: string;
+  action: 'create' | 'modify';
+  description: string;
+  content?: string;       // For write_file
+  unifiedDiff?: string;   // For apply_patch
+}
+
+// Approval response for a single file
+export type ApprovalChoice = 'yes' | 'no' | 'skip' | 'abort';
+
 // Activity callback types for real-time transparency
 export type ActivityType =
   | 'thinking'           // Claude is analyzing/reasoning
@@ -166,7 +186,8 @@ export type ActivityType =
   | 'tool_end'           // Tool call completed
   | 'advisor_start'      // Starting advisor consultation
   | 'advisor_end'        // Advisor consultation completed
-  | 'context_gathering'; // Gathering initial context
+  | 'context_gathering'  // Gathering initial context
+  | 'phase_change';      // Execution phase changed
 
 export interface ActivityEvent {
   type: ActivityType;
@@ -176,6 +197,8 @@ export interface ActivityEvent {
     advisor?: string;        // Advisor name (for advisor events)
     question?: string;       // High-level question summary (for advisor events)
     success?: boolean;       // Whether the operation succeeded (for _end events)
+    phase?: ExecutionPhase;  // Current execution phase (for phase_change events)
+    proposedChanges?: ProposedChange[];  // List of proposed changes
   };
 }
 

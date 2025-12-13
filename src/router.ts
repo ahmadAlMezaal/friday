@@ -93,12 +93,15 @@ function buildTools(options: CliOptions): AgentTool[] {
   // Add write tools only if --apply or --approve is set
   if (options.apply || options.approve) {
     const modeNote = options.approve
-      ? 'User will be prompted to approve each change.'
-      : 'Changes will be applied immediately.';
+      ? 'User will be prompted to approve each change with options: [y]es / [n]o / [s]kip / [a]bort.'
+      : 'Changes will be applied immediately (--apply mode).';
+
+    const workflowNote = 'IMPORTANT: Before calling this tool, you MUST first state "I am ready to write the following files:" and list all planned changes.';
+
     tools.push(
       {
         name: 'write_file',
-        description: `Write content to a file. ${modeNote}`,
+        description: `Write content to a file. ${modeNote} ${workflowNote}`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -116,7 +119,7 @@ function buildTools(options: CliOptions): AgentTool[] {
       },
       {
         name: 'apply_patch',
-        description: `Apply a unified diff patch to a file. ${modeNote}`,
+        description: `Apply a unified diff patch to a file. ${modeNote} ${workflowNote}`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -283,6 +286,10 @@ async function executeToolCall(
             requireApproval: options.approve,
           }
         );
+        // Check for abort signal
+        if ((writeResult as { abort?: boolean }).abort) {
+          return { error: 'ABORT: User aborted all remaining changes. Stop processing further writes.' };
+        }
         result = JSON.stringify(writeResult);
         break;
       }
@@ -301,6 +308,10 @@ async function executeToolCall(
             requireApproval: options.approve,
           }
         );
+        // Check for abort signal
+        if ((patchResult as { abort?: boolean }).abort) {
+          return { error: 'ABORT: User aborted all remaining changes. Stop processing further writes.' };
+        }
         result = JSON.stringify(patchResult);
         break;
       }

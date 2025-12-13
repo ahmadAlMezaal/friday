@@ -1,29 +1,18 @@
 import { writeFile as fsWriteFile, mkdir, readFile as fsReadFile } from 'fs/promises';
 import { dirname } from 'path';
-import { createInterface } from 'readline';
-import { createTwoFilesPatch } from 'diff';
 import { OperationResult } from '../../types.js';
 import { resolvePathInWorkspace, WorkspaceError } from '../../workspace.js';
+import {
+  promptForApproval,
+  displayWriteProposal,
+  displayApprovalResult,
+} from './approval.js';
 
 export interface WriteFileOptions {
   cwd: string;
   workspace?: string; // The explicit write sandbox
   allowWrite: boolean;
   requireApproval?: boolean;
-}
-
-async function promptForApproval(message: string): Promise<boolean> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question(`${message} [y/N]: `, (answer) => {
-      rl.close();
-      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
-    });
-  });
 }
 
 export async function writeFile(
@@ -63,26 +52,34 @@ export async function writeFile(
 
   // Read existing content for diff display
   let existingContent = '';
+  let isNewFile = true;
   try {
     existingContent = await fsReadFile(fullPath, 'utf-8');
+    isNewFile = false;
   } catch {
     // File doesn't exist yet, that's fine
   }
 
-  // If approval is required, show diff and prompt
+  // If approval is required, show diff and prompt with enhanced UX
   if (options.requireApproval) {
-    const patch = createTwoFilesPatch(path, path, existingContent, content, 'original', 'new');
-    console.log('\n' + '─'.repeat(60));
-    console.log(`📝 Proposed write to: ${path}`);
-    console.log('─'.repeat(60));
-    console.log(patch);
-    console.log('─'.repeat(60));
+    displayWriteProposal(path, existingContent, content, isNewFile);
 
-    const approved = await promptForApproval('Apply this change?');
-    if (!approved) {
+    const choice = await promptForApproval('Apply this change?');
+    displayApprovalResult(path, choice);
+
+    if (choice === 'abort') {
       return {
         ok: false,
-        message: `Write to ${path} was rejected by user.`,
+        message: `ABORT: User aborted all remaining changes.`,
+        abort: true,
+      } as OperationResult & { abort?: boolean };
+    }
+
+    if (choice === 'no' || choice === 'skip') {
+      const action = choice === 'skip' ? 'skipped' : 'rejected';
+      return {
+        ok: false,
+        message: `Write to ${path} was ${action} by user.`,
       };
     }
   }

@@ -1,28 +1,18 @@
 import { readFile as fsReadFile, writeFile as fsWriteFile } from 'fs/promises';
 import { applyPatch as diffApplyPatch } from 'diff';
-import { createInterface } from 'readline';
 import { OperationResult } from '../../types.js';
 import { resolvePathInWorkspace, WorkspaceError } from '../../workspace.js';
+import {
+  promptForApproval,
+  displayPatchProposal,
+  displayApprovalResult,
+} from './approval.js';
 
 export interface ApplyPatchOptions {
   cwd: string;
   workspace?: string; // The explicit write sandbox
   allowWrite: boolean;
   requireApproval?: boolean;
-}
-
-async function promptForApproval(message: string): Promise<boolean> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question(`${message} [y/N]: `, (answer) => {
-      rl.close();
-      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
-    });
-  });
 }
 
 export async function applyPatch(
@@ -80,19 +70,26 @@ export async function applyPatch(
       };
     }
 
-    // If approval is required, show diff and prompt
+    // If approval is required, show diff and prompt with enhanced UX
     if (options.requireApproval) {
-      console.log('\n' + '─'.repeat(60));
-      console.log(`🔧 Proposed patch to: ${path}`);
-      console.log('─'.repeat(60));
-      console.log(unifiedDiff);
-      console.log('─'.repeat(60));
+      displayPatchProposal(path, unifiedDiff);
 
-      const approved = await promptForApproval('Apply this patch?');
-      if (!approved) {
+      const choice = await promptForApproval('Apply this patch?');
+      displayApprovalResult(path, choice);
+
+      if (choice === 'abort') {
         return {
           ok: false,
-          message: `Patch to ${path} was rejected by user.`,
+          message: `ABORT: User aborted all remaining changes.`,
+          abort: true,
+        } as OperationResult & { abort?: boolean };
+      }
+
+      if (choice === 'no' || choice === 'skip') {
+        const action = choice === 'skip' ? 'skipped' : 'rejected';
+        return {
+          ok: false,
+          message: `Patch to ${path} was ${action} by user.`,
         };
       }
     }
