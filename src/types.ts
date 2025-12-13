@@ -144,17 +144,23 @@ export interface SessionMessage {
   timestamp: Date;
 }
 
+// Write mode for interactive sessions
+export type WriteMode = 'dry-run' | 'approve' | 'apply';
+
 export interface InteractiveSession {
   messages: SessionMessage[];
   workspace: string | undefined;
   cwd: string;
+  invocationCwd: string; // Directory where friday was launched (for resolving relative paths)
   options: Omit<CliOptions, 'task'>; // task is per-message in interactive mode
   startedAt: Date;
+  planOnly: boolean; // When true, next task will be plan-only
 }
 
 // Interactive mode CLI options (no task required upfront)
 export const InteractiveOptionsSchema = CliOptionsSchema.omit({ task: true }).extend({
   task: z.string().optional(),
+  invocationCwd: z.string().optional(), // Directory where friday was launched
 });
 
 export type InteractiveOptions = z.infer<typeof InteractiveOptionsSchema>;

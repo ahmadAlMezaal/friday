@@ -7,6 +7,7 @@ import {
   displayWriteProposal,
   displayApprovalResult,
 } from './approval.js';
+import { renderFileWritten } from '../../ui.js';
 
 export interface WriteFileOptions {
   cwd: string;
@@ -88,6 +89,10 @@ export async function writeFile(
     // Ensure directory exists
     await mkdir(dirname(fullPath), { recursive: true });
     await fsWriteFile(fullPath, content, 'utf-8');
+
+    // Display write visibility notification
+    console.log(renderFileWritten(path));
+
     return { ok: true, message: `Successfully wrote to ${path}` };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

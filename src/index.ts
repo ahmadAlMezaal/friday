@@ -373,6 +373,7 @@ program
         verbose: opts.verbose,
         maxToolCalls: parseInt(opts.maxToolCalls, 10),
         maxTurns: parseInt(opts.maxTurns, 10),
+        invocationCwd: INVOCATION_CWD, // Where friday was launched from
       });
 
       // Determine key requirements based on advisors

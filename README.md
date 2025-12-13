@@ -193,7 +193,7 @@ friday run "yarn test"
 Interactive mode is the **default** when you run `friday` without arguments:
 
 ```bash
-# Start interactive session (read-only)
+# Start interactive session (read-only by default)
 friday
 
 # With write access (requires --workspace)
@@ -206,48 +206,118 @@ friday --advisors openai --workspace ./my-project --apply
 friday interactive
 ```
 
+### Session Control Commands
+
+Friday supports a smooth workflow where you can start in dry-run mode, request a plan, then enable writes — all within the same session:
+
+```bash
+# Start in safe mode (default)
+friday
+
+# Later, set workspace and enable writes from within the REPL
+friday> !workspace ./my-project
+✓ Workspace set to: ./my-project
+
+friday> !approve
+✓ Mode changed to: approve
+```
+
+### Example: Plan-First Workflow
+
+```
+friday> !plan
+• Plan mode enabled for next task. Claude will provide a plan without writing files.
+
+friday> add user authentication to the app
+[Claude provides a detailed plan without writing files]
+
+→ Proceed to implementation? (y/N): y
+✓ Mode changed to: approve
+• You can now ask Claude to implement the plan.
+
+friday> implement the plan
+[Claude writes files, showing each change for approval]
+
+   ✍ wrote: src/auth/login.tsx
+   ✍ wrote: src/auth/hooks.ts
+```
+
 ### Interactive Session Example
 
 ```
-========================================================
-  Friday - Claude-primary Agent
-========================================================
+   ╭──────────────────────────────────────────╮
+   │  ✦  F R I D A Y  ✦                       │
+   │       Claude-primary Agent               │
+   ╰──────────────────────────────────────────╯
 
-Workspace: /Users/you/projects/my-project
-Mode: approve
-Type !help for commands, !exit to quit
+   Workspace   (read-only)
+   Mode        dry-run
+   Advisors    none
 
-friday> plan a todo list website
-Claude is thinking...
+   Type your task, or !help for commands.
 
-Claude:
-I'll help you plan a todo list website. Here's the architecture:
-1. React frontend with TypeScript
-2. Local storage for persistence
-...
+❯ friday › !workspace ./my-project
+✓ Workspace set to: ~/my-project
 
-friday> create the main App component
-Claude is thinking...
+❯ friday › !plan
+• Plan mode enabled for next task. Claude will provide a plan without writing files.
 
-Claude:
-I'll create the App component for you.
+❯ friday › build a todo list website
+   ◌ Gathering context...
+   ⚙ Claude is searching the repository...
+
+┌ Claude ────────────────────────────────────────
+I'll plan a todo list website for you. Here's the architecture:
+
+1. **Components**
+   - `App.tsx` - Main application component
+   - `TodoList.tsx` - List container
+   - `TodoItem.tsx` - Individual todo item
+
+2. **State Management**
+   - Use React useState for local state
+   - Local storage for persistence
+
+3. **Features**
+   - Add/remove todos
+   - Mark as complete
+   - Filter by status
+└────────────────────────────────────────────────
+
+→ Proceed to implementation? (y/N): y
+✓ Mode changed to: approve
+• You can now ask Claude to implement the plan.
+
+❯ friday › implement the plan
+   ◌ Gathering context...
+   ⚙ Claude is writing a file...
+
 [Shows diff]
 Apply this change? [y/N]: y
-File written: src/App.tsx
+   ✍ wrote: src/App.tsx
 
-friday> !diff
-Git diff:
-[Shows current uncommitted changes]
+[Shows diff]
+Apply this change? [y/N]: y
+   ✍ wrote: src/TodoList.tsx
 
-friday> !status
+┌ Claude ────────────────────────────────────────
+I've created the todo list website with the following files:
+- src/App.tsx - Main app with state management
+- src/TodoList.tsx - List component with filtering
+- src/TodoItem.tsx - Individual todo with toggle
+└────────────────────────────────────────────────
+
+❯ friday › !status
 Session status:
-  Workspace: /Users/you/projects/my-project
-  Mode: approve
-  Messages: 4
-  Duration: 2m 30s
+  Workspace  ~/my-project
+  CWD        ~/my-project
+  Mode       approve
+  Advisors   none
+  Messages   4
+  Duration   3m 45s
 
-friday> !exit
-Goodbye!
+❯ friday › !exit
+• Goodbye!
 ```
 
 ### Built-in Commands
@@ -260,6 +330,17 @@ Goodbye!
 | `!status` | `!s` | Show session status (workspace, mode, message count) |
 | `!run <cmd>` | `!r` | Run an allowed command |
 | `!clear` | `!c` | Clear conversation history |
+
+### Session Control Commands
+
+| Command | Description |
+|---------|-------------|
+| `!workspace <path>` | Set/change workspace directory (resolves relative to launch dir) |
+| `!mode <mode>` | Set write mode: `dry-run`, `approve`, or `apply` |
+| `!dry` | Shortcut for `!mode dry-run` |
+| `!approve` | Shortcut for `!mode approve` (requires workspace) |
+| `!apply` | Shortcut for `!mode apply` (requires workspace) |
+| `!plan` | Toggle plan-only mode for the next task |
 
 ### Interactive Mode Options
 

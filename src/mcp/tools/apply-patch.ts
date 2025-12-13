@@ -7,6 +7,7 @@ import {
   displayPatchProposal,
   displayApprovalResult,
 } from './approval.js';
+import { renderFilePatched } from '../../ui.js';
 
 export interface ApplyPatchOptions {
   cwd: string;
@@ -96,6 +97,9 @@ export async function applyPatch(
 
     // Write patched content
     await fsWriteFile(fullPath, patchedContent, 'utf-8');
+
+    // Display patch visibility notification
+    console.log(renderFilePatched(path));
 
     return { ok: true, message: `Successfully applied patch to ${path}` };
   } catch (error) {

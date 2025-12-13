@@ -329,7 +329,81 @@ export function renderHelp(): string {
   );
   lines.push('');
 
+  lines.push(`${colors.primary('Session Control:')}`);
+  lines.push(
+    `  ${colors.text('!workspace <path>')}    ${colors.textDim('Set/change workspace directory')}`
+  );
+  lines.push(
+    `  ${colors.text('!mode <mode>')}         ${colors.textDim('Set write mode: dry-run, approve, apply')}`
+  );
+  lines.push(
+    `  ${colors.text('!dry')}                 ${colors.textDim('Shortcut for !mode dry-run')}`
+  );
+  lines.push(
+    `  ${colors.text('!approve')}             ${colors.textDim('Shortcut for !mode approve')}`
+  );
+  lines.push(
+    `  ${colors.text('!apply')}               ${colors.textDim('Shortcut for !mode apply')}`
+  );
+  lines.push(
+    `  ${colors.text('!plan')}                ${colors.textDim('Request plan only for next task')}`
+  );
+  lines.push('');
+
   return lines.join('\n');
+}
+
+// ============================================================================
+// Write Visibility Rendering
+// ============================================================================
+
+/**
+ * Render file write notification
+ */
+export function renderFileWritten(path: string): string {
+  return colors.success(`   ✍ wrote: ${path}`);
+}
+
+/**
+ * Render file patch notification
+ */
+export function renderFilePatched(path: string): string {
+  return colors.secondary(`   🩹 patched: ${path}`);
+}
+
+/**
+ * Render workspace change notification
+ */
+export function renderWorkspaceChanged(path: string): string {
+  return colors.success(`\n${symbols.check} Workspace set to: ${shortenPath(path)}\n`);
+}
+
+/**
+ * Render mode change notification
+ */
+export function renderModeChanged(mode: 'dry-run' | 'approve' | 'apply'): string {
+  return `\n${symbols.check} Mode changed to: ${getModeDisplay(mode)}\n`;
+}
+
+/**
+ * Render plan mode enabled indicator
+ */
+export function renderPlanModeEnabled(): string {
+  return colors.secondary(`\n${symbols.bullet} Plan mode enabled for next task. Claude will provide a plan without writing files.\n`);
+}
+
+/**
+ * Render plan mode disabled indicator
+ */
+export function renderPlanModeDisabled(): string {
+  return colors.textDim(`\n${symbols.bullet} Plan mode disabled.\n`);
+}
+
+/**
+ * Render plan confirmation prompt
+ */
+export function renderPlanConfirmation(): string {
+  return colors.secondary(`\n${symbols.arrow} Proceed to implementation? (y/N): `);
 }
 
 /**
