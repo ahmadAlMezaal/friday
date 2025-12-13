@@ -158,3 +158,25 @@ export const InteractiveOptionsSchema = CliOptionsSchema.omit({ task: true }).ex
 });
 
 export type InteractiveOptions = z.infer<typeof InteractiveOptionsSchema>;
+
+// Activity callback types for real-time transparency
+export type ActivityType =
+  | 'thinking'           // Claude is analyzing/reasoning
+  | 'tool_start'         // Starting a tool call
+  | 'tool_end'           // Tool call completed
+  | 'advisor_start'      // Starting advisor consultation
+  | 'advisor_end'        // Advisor consultation completed
+  | 'context_gathering'; // Gathering initial context
+
+export interface ActivityEvent {
+  type: ActivityType;
+  message: string;           // Human-readable activity message
+  details?: {
+    tool?: string;           // Tool name (for tool events)
+    advisor?: string;        // Advisor name (for advisor events)
+    question?: string;       // High-level question summary (for advisor events)
+    success?: boolean;       // Whether the operation succeeded (for _end events)
+  };
+}
+
+export type ActivityCallback = (event: ActivityEvent) => void;

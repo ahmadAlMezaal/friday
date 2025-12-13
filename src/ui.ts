@@ -345,3 +345,96 @@ export function renderGoodbye(): string {
 export function renderInterrupted(): string {
   return colors.textDim(`\n\n${symbols.bullet} Interrupted. Goodbye!\n`);
 }
+
+// ============================================================================
+// Real-time Activity Rendering
+// ============================================================================
+
+/**
+ * Map of tool names to human-readable activity descriptions
+ */
+const TOOL_DESCRIPTIONS: Record<string, string> = {
+  repo_search: 'searching the repository',
+  read_file: 'reading a file',
+  git_diff: 'checking git changes',
+  run_command: 'running a command',
+  write_file: 'writing a file',
+  apply_patch: 'applying a patch',
+  ask_openai: 'consulting OpenAI',
+  ask_gemini: 'consulting Gemini',
+};
+
+/**
+ * Get a human-readable description for a tool
+ */
+function getToolDescription(toolName: string): string {
+  return TOOL_DESCRIPTIONS[toolName] || toolName.replace(/_/g, ' ');
+}
+
+/**
+ * Render a real-time activity indicator (inline, no newline)
+ */
+export function renderActivity(message: string): string {
+  return colors.textDim(`   ${symbols.thinking} ${message}`);
+}
+
+/**
+ * Render tool activity start
+ */
+export function renderToolStart(toolName: string): string {
+  const description = getToolDescription(toolName);
+  return colors.textDim(`   ${symbols.gear} Claude is ${description}...`);
+}
+
+/**
+ * Render tool activity end
+ */
+export function renderToolEnd(toolName: string, success: boolean): string {
+  const description = getToolDescription(toolName);
+  if (success) {
+    return colors.textDim(`   ${symbols.check} Done ${description}`);
+  }
+  return colors.warning(`   ${symbols.cross} Failed ${description}`);
+}
+
+/**
+ * Render advisor consultation start
+ */
+export function renderAdvisorStart(advisor: string, questionSummary?: string): string {
+  const advisorName = advisor.charAt(0).toUpperCase() + advisor.slice(1);
+  const lines: string[] = [];
+  lines.push(colors.secondary(`   ${symbols.bullet} Asking ${advisorName} for a second opinion...`));
+  if (questionSummary) {
+    // Truncate long questions
+    const truncated = questionSummary.length > 80
+      ? questionSummary.substring(0, 77) + '...'
+      : questionSummary;
+    lines.push(colors.textDim(`     "${truncated}"`));
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Render advisor consultation end
+ */
+export function renderAdvisorEnd(advisor: string, success: boolean): string {
+  const advisorName = advisor.charAt(0).toUpperCase() + advisor.slice(1);
+  if (success) {
+    return colors.secondary(`   ${symbols.check} ${advisorName} responded`);
+  }
+  return colors.warning(`   ${symbols.cross} ${advisorName} failed to respond`);
+}
+
+/**
+ * Render context gathering activity
+ */
+export function renderContextGathering(): string {
+  return colors.textDim(`   ${symbols.thinking} Gathering context...`);
+}
+
+/**
+ * Clear the current line (for updating in-place)
+ */
+export function clearLine(): void {
+  process.stdout.write('\r\x1b[K');
+}

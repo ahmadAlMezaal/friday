@@ -6,6 +6,8 @@ import {
   ToolResult,
   ToolCallRecord,
   AdvisorResponse,
+  ActivityCallback,
+  ActivityEvent,
 } from './types.js';
 import { ClaudeProvider } from './providers/claude.js';
 import { askOpenAI } from './advisors/openai.js';
@@ -28,6 +30,7 @@ interface GraphState {
   response: { content: string; model: string } | null;
   advisorResponses: AdvisorResponse[];
   toolCalls: ToolCallRecord[];
+  onActivity?: ActivityCallback;
 }
 
 // Build the tool definitions for Claude
@@ -177,16 +180,66 @@ function buildTools(options: CliOptions): AgentTool[] {
   return tools;
 }
 
+/**
+ * Extract a high-level question summary from an advisor prompt.
+ * Looks for the QUESTION section or takes the first line.
+ */
+function extractQuestionSummary(prompt: string): string {
+  // Try to find a QUESTION section
+  const questionMatch = prompt.match(/(?:^|\n)\s*(?:QUESTION|Question):\s*(.+?)(?:\n|$)/i);
+  if (questionMatch) {
+    return questionMatch[1].trim();
+  }
+
+  // Try to find the TASK section
+  const taskMatch = prompt.match(/(?:^|\n)\s*(?:TASK|Task):\s*(.+?)(?:\n|$)/i);
+  if (taskMatch) {
+    return taskMatch[1].trim();
+  }
+
+  // Fall back to first meaningful line
+  const lines = prompt.split('\n').filter(l => l.trim().length > 0);
+  if (lines.length > 0) {
+    const firstLine = lines[0].trim();
+    return firstLine.length > 100 ? firstLine.substring(0, 97) + '...' : firstLine;
+  }
+
+  return 'Seeking a second opinion';
+}
+
 // Tool execution handler
 async function executeToolCall(
   name: string,
   input: Record<string, unknown>,
   options: CliOptions,
   toolCalls: ToolCallRecord[],
-  advisorResponses: AdvisorResponse[]
+  advisorResponses: AdvisorResponse[],
+  onActivity?: ActivityCallback
 ): Promise<ToolResult> {
   const cwd = options.cwd || process.cwd();
   const timestamp = new Date();
+
+  // Determine if this is an advisor tool
+  const isAdvisorTool = name === 'ask_openai' || name === 'ask_gemini';
+  const advisorName = name === 'ask_openai' ? 'openai' : name === 'ask_gemini' ? 'gemini' : undefined;
+
+  // Emit activity start event
+  if (onActivity) {
+    if (isAdvisorTool && advisorName) {
+      const questionSummary = extractQuestionSummary(input.prompt as string);
+      onActivity({
+        type: 'advisor_start',
+        message: `Asking ${advisorName} for a second opinion...`,
+        details: { advisor: advisorName, question: questionSummary },
+      });
+    } else {
+      onActivity({
+        type: 'tool_start',
+        message: `Using ${name}`,
+        details: { tool: name },
+      });
+    }
+  }
 
   try {
     let result: string;
@@ -290,9 +343,44 @@ async function executeToolCall(
       timestamp,
     });
 
+    // Emit activity end event
+    if (onActivity) {
+      if (isAdvisorTool && advisorName) {
+        onActivity({
+          type: 'advisor_end',
+          message: `${advisorName} responded`,
+          details: { advisor: advisorName, success: true },
+        });
+      } else {
+        onActivity({
+          type: 'tool_end',
+          message: `Completed ${name}`,
+          details: { tool: name, success: true },
+        });
+      }
+    }
+
     return { content: result };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+
+    // Emit activity end event for failure
+    if (onActivity) {
+      if (isAdvisorTool && advisorName) {
+        onActivity({
+          type: 'advisor_end',
+          message: `${advisorName} failed`,
+          details: { advisor: advisorName, success: false },
+        });
+      } else {
+        onActivity({
+          type: 'tool_end',
+          message: `Failed ${name}`,
+          details: { tool: name, success: false },
+        });
+      }
+    }
+
     return { error: errorMsg };
   }
 }
@@ -311,6 +399,14 @@ async function executeToolCall(
 async function gatherContext(state: GraphState): Promise<Partial<GraphState>> {
   const cwd = state.options.cwd || process.cwd();
   const contextParts: string[] = [];
+
+  // Emit context gathering activity
+  if (state.onActivity) {
+    state.onActivity({
+      type: 'context_gathering',
+      message: 'Gathering context...',
+    });
+  }
 
   // Deterministic: always get git diff if available
   try {
@@ -352,6 +448,14 @@ async function runClaudeAgent(state: GraphState): Promise<Partial<GraphState>> {
     );
   }
 
+  // Emit thinking activity
+  if (state.onActivity) {
+    state.onActivity({
+      type: 'thinking',
+      message: 'Claude is analysing the task...',
+    });
+  }
+
   const tools = buildTools(state.options);
   const toolCalls: ToolCallRecord[] = [...state.toolCalls];
   const advisorResponses: AdvisorResponse[] = [...state.advisorResponses];
@@ -360,7 +464,7 @@ async function runClaudeAgent(state: GraphState): Promise<Partial<GraphState>> {
     apiKey,
     tools,
     onToolCall: async (name, input) => {
-      return executeToolCall(name, input, state.options, toolCalls, advisorResponses);
+      return executeToolCall(name, input, state.options, toolCalls, advisorResponses, state.onActivity);
     },
     maxToolCalls: state.options.maxToolCalls,
     maxTurns: state.options.maxTurns,
@@ -426,6 +530,10 @@ export function createOrchestratorGraph() {
         value: (a: ToolCallRecord[], b?: ToolCallRecord[]) => b ?? a,
         default: () => [],
       },
+      onActivity: {
+        value: (a: ActivityCallback | undefined, b?: ActivityCallback) => b ?? a,
+        default: () => undefined,
+      },
     },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any;
@@ -445,7 +553,8 @@ export function createOrchestratorGraph() {
 // Main orchestrator function
 export async function runOrchestrator(
   task: string,
-  options: CliOptions
+  options: CliOptions,
+  onActivity?: ActivityCallback
 ): Promise<OrchestratorState> {
   const graph = createOrchestratorGraph();
 
@@ -456,6 +565,7 @@ export async function runOrchestrator(
     response: null,
     advisorResponses: [],
     toolCalls: [],
+    onActivity,
   };
 
   const result = await graph.invoke(initialState);

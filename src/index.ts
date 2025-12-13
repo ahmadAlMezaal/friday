@@ -20,7 +20,14 @@ import {
   renderAdvisorResult,
   renderError,
   shortenPath,
+  renderActivity,
+  renderToolStart,
+  renderToolEnd,
+  renderAdvisorStart,
+  renderAdvisorEnd,
+  renderContextGathering,
 } from './ui.js';
+import { ActivityEvent, ActivityCallback } from './types.js';
 import {
   detectMissingKeys,
   hasMissingKeys,
@@ -144,40 +151,43 @@ program
       console.log(`   ${colors.label('Limits')}      ${options.maxToolCalls} tool calls, ${options.maxTurns} turns`);
       console.log('');
 
-      // Run orchestrator
-      console.log(renderThinking());
-      const result = await runOrchestrator(options.task, options);
+      // Create activity callback for real-time display
+      const onActivity: ActivityCallback = (event: ActivityEvent) => {
+        switch (event.type) {
+          case 'context_gathering':
+            console.log(renderContextGathering());
+            break;
 
-      // Display tool calls if verbose
-      if (options.verbose && result.toolCalls.length > 0) {
-        console.log(colors.textDim('─'.repeat(50)));
-        console.log(colors.label('Tool Calls:'));
-        for (const call of result.toolCalls) {
-          console.log('  ' + renderToolCall(call.tool));
-        }
-        console.log('');
-      }
+          case 'thinking':
+            console.log(renderActivity(event.message));
+            break;
 
-      // Display advisor consultations
-      if (result.advisorResponses.length > 0) {
-        console.log(colors.primary('─'.repeat(50)));
-        console.log(colors.primary.bold(' Advisor Consultations'));
-        console.log(colors.primary('─'.repeat(50)));
-        console.log('');
-
-        for (const advisor of result.advisorResponses) {
-          if (advisor.error) {
-            console.log(renderAdvisorResult(advisor.model, advisor.error));
-          } else {
-            console.log(colors.textDim(`[${advisor.model}]`));
-            console.log(advisor.response.substring(0, 500));
-            if (advisor.response.length > 500) {
-              console.log(colors.textDim('... (truncated)'));
+          case 'tool_start':
+            if (event.details?.tool) {
+              console.log(renderToolStart(event.details.tool));
             }
-          }
-          console.log('');
+            break;
+
+          case 'tool_end':
+            // End events handled silently for cleaner output
+            break;
+
+          case 'advisor_start':
+            if (event.details?.advisor) {
+              console.log(renderAdvisorStart(event.details.advisor, event.details.question));
+            }
+            break;
+
+          case 'advisor_end':
+            if (event.details?.advisor) {
+              console.log(renderAdvisorEnd(event.details.advisor, event.details.success ?? true));
+            }
+            break;
         }
-      }
+      };
+
+      // Run orchestrator with activity callback
+      const result = await runOrchestrator(options.task, options, onActivity);
 
       // Display Claude's response
       console.log(renderResponseStart());

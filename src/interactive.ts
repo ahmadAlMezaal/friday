@@ -40,7 +40,14 @@ import {
   renderError,
   renderSystemMessage,
   shortenPath,
+  renderActivity,
+  renderToolStart,
+  renderToolEnd,
+  renderAdvisorStart,
+  renderAdvisorEnd,
+  renderContextGathering,
 } from './ui.js';
+import { ActivityEvent, ActivityCallback } from './types.js';
 
 // Built-in command handlers
 interface BuiltinCommand {
@@ -203,6 +210,46 @@ function buildContextFromHistory(session: InteractiveSession): string {
   return contextParts.join('\n');
 }
 
+/**
+ * Create an activity callback for real-time display
+ */
+function createActivityCallback(): ActivityCallback {
+  return (event: ActivityEvent) => {
+    switch (event.type) {
+      case 'context_gathering':
+        console.log(renderContextGathering());
+        break;
+
+      case 'thinking':
+        console.log(renderActivity(event.message));
+        break;
+
+      case 'tool_start':
+        if (event.details?.tool) {
+          console.log(renderToolStart(event.details.tool));
+        }
+        break;
+
+      case 'tool_end':
+        // Only show end for non-advisor tools in verbose mode
+        // (advisors have their own end rendering)
+        break;
+
+      case 'advisor_start':
+        if (event.details?.advisor) {
+          console.log(renderAdvisorStart(event.details.advisor, event.details.question));
+        }
+        break;
+
+      case 'advisor_end':
+        if (event.details?.advisor) {
+          console.log(renderAdvisorEnd(event.details.advisor, event.details.success ?? true));
+        }
+        break;
+    }
+  };
+}
+
 async function processTask(
   session: InteractiveSession,
   task: string
@@ -228,27 +275,12 @@ async function processTask(
     ? `${historyContext}\n\n## Current Task\n${task}`
     : task;
 
-  console.log(renderThinking());
+  // Create activity callback for real-time display
+  const onActivity = createActivityCallback();
+  console.log(''); // Add spacing before activity output
 
   try {
-    const result = await runOrchestrator(taskWithContext, options);
-
-    // Display tool calls if verbose
-    if (session.options.verbose && result.toolCalls.length > 0) {
-      for (const call of result.toolCalls) {
-        console.log(renderToolCall(call.tool));
-      }
-      console.log('');
-    }
-
-    // Display advisor consultations if any
-    if (result.advisorResponses.length > 0) {
-      console.log(colors.primary('Advisors:'));
-      for (const advisor of result.advisorResponses) {
-        console.log('  ' + renderAdvisorResult(advisor.model, advisor.error));
-      }
-      console.log('');
-    }
+    const result = await runOrchestrator(taskWithContext, options, onActivity);
 
     // Display Claude's response with styled header
     console.log(renderResponseStart());
