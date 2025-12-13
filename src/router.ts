@@ -18,6 +18,7 @@ import {
   runCommand,
   gitDiff,
 } from './mcp/tools/index.js';
+import { getKey } from './api-key-setup.js';
 
 // Graph state interface
 interface GraphState {
@@ -252,7 +253,7 @@ async function executeToolCall(
       }
 
       case 'ask_openai': {
-        const openaiKey = process.env.OPENAI_API_KEY;
+        const openaiKey = getKey('openai');
         const advisorResult = await askOpenAI(input.prompt as string, {
           apiKey: openaiKey || '',
         });
@@ -265,7 +266,7 @@ async function executeToolCall(
       }
 
       case 'ask_gemini': {
-        const geminiKey = process.env.GEMINI_API_KEY;
+        const geminiKey = getKey('gemini');
         const advisorResult = await askGemini(input.prompt as string, {
           apiKey: geminiKey || '',
         });
@@ -343,7 +344,7 @@ async function gatherContext(state: GraphState): Promise<Partial<GraphState>> {
 
 // Node: Run Claude agent
 async function runClaudeAgent(state: GraphState): Promise<Partial<GraphState>> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = getKey('anthropic');
   if (!apiKey) {
     throw new Error(
       'ANTHROPIC_API_KEY is required.\n' +

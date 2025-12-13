@@ -21,6 +21,14 @@ import {
   renderError,
   shortenPath,
 } from './ui.js';
+import {
+  detectMissingKeys,
+  hasMissingKeys,
+  isMissingPrimaryKey,
+  promptForMissingKeys,
+  isInteractiveMode,
+  KeyRequirements,
+} from './api-key-setup.js';
 
 // Capture the original process.cwd() BEFORE any Yarn --cwd override takes effect
 // This is the directory from which the user invoked the command
@@ -97,7 +105,26 @@ program
         maxTurns: parseInt(opts.maxTurns, 10),
       });
 
-      // Load and validate config
+      // Determine key requirements based on advisors
+      const keyRequirements: KeyRequirements = {
+        anthropic: true, // Always required
+        openai: advisorList.includes('openai'),
+        gemini: advisorList.includes('gemini'),
+      };
+
+      // Check for missing keys before loading config
+      const missing = detectMissingKeys(keyRequirements);
+
+      if (hasMissingKeys(missing)) {
+        // Try interactive setup (will fail fast in non-interactive mode)
+        const setupSuccess = await promptForMissingKeys(keyRequirements, missing);
+
+        if (!setupSuccess) {
+          process.exit(1);
+        }
+      }
+
+      // Load and validate config (now with session keys if set)
       const config = loadConfig(options);
       validateConfig(config);
 
@@ -338,7 +365,26 @@ program
         maxTurns: parseInt(opts.maxTurns, 10),
       });
 
-      // Load and validate config
+      // Determine key requirements based on advisors
+      const keyRequirements: KeyRequirements = {
+        anthropic: true, // Always required
+        openai: advisorList.includes('openai'),
+        gemini: advisorList.includes('gemini'),
+      };
+
+      // Check for missing keys before loading config
+      const missing = detectMissingKeys(keyRequirements);
+
+      if (hasMissingKeys(missing)) {
+        // Try interactive setup (will fail fast in non-interactive mode)
+        const setupSuccess = await promptForMissingKeys(keyRequirements, missing);
+
+        if (!setupSuccess) {
+          process.exit(1);
+        }
+      }
+
+      // Load and validate config (now with session keys if set)
       const config = loadConfig({ ...options, task: '' });
       validateConfig(config);
 

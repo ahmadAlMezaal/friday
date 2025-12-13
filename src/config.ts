@@ -1,5 +1,6 @@
 import { CliOptions } from "./types.js";
 import "dotenv/config";
+import { getKey } from "./api-key-setup.js";
 
 export interface Config {
   anthropicApiKey?: string;
@@ -9,10 +10,15 @@ export interface Config {
   options: CliOptions;
 }
 
+/**
+ * Load configuration from environment and session keys.
+ * Session keys (set via interactive prompt) take precedence over env vars.
+ */
 export function loadConfig(options: CliOptions): Config {
-  const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-  const openaiApiKey = process.env.OPENAI_API_KEY;
-  const geminiApiKey = process.env.GEMINI_API_KEY;
+  // Use getKey to check both session and environment
+  const anthropicApiKey = getKey('anthropic');
+  const openaiApiKey = getKey('openai');
+  const geminiApiKey = getKey('gemini');
 
   return {
     anthropicApiKey,
