@@ -1,0 +1,347 @@
+/**
+ * Terminal UI Utilities
+ *
+ * Consistent styling for Friday CLI.
+ * Designed to be subtle, elegant, and readable in plain terminals.
+ */
+
+import chalk from 'chalk';
+
+// Color palette - subtle and professional
+export const colors = {
+  // Primary accent (soft violet)
+  primary: chalk.hex('#A78BFA'),
+  primaryDim: chalk.hex('#7C3AED'),
+
+  // Secondary (cyan family)
+  secondary: chalk.cyan,
+  secondaryDim: chalk.cyanBright,
+
+  // Semantic colors
+  success: chalk.green,
+  warning: chalk.yellow,
+  error: chalk.red,
+  info: chalk.blue,
+
+  // Text hierarchy
+  text: chalk.white,
+  textDim: chalk.gray,
+  textMuted: chalk.dim,
+
+  // Labels
+  label: chalk.white.bold,
+};
+
+// Unicode characters for visual elements
+export const symbols = {
+  // Box drawing (rounded corners)
+  topLeft: '╭',
+  topRight: '╮',
+  bottomLeft: '╰',
+  bottomRight: '╯',
+  horizontal: '─',
+  vertical: '│',
+
+  // Prompt
+  chevron: '›',
+  prompt: '❯',
+
+  // Indicators
+  star: '✦',
+  bullet: '•',
+  gear: '⚙',
+  check: '✓',
+  cross: '✗',
+  arrow: '→',
+  thinking: '◌',
+
+  // Section markers
+  sectionStart: '┌',
+  sectionEnd: '└',
+  sectionLine: '│',
+};
+
+/**
+ * Create a centered, boxed header
+ */
+export function renderHeader(options: {
+  workspace?: string;
+  mode: 'dry-run' | 'approve' | 'apply';
+  advisors: string[];
+}): string {
+  const lines: string[] = [];
+  const width = 42;
+
+  // Box top
+  lines.push(
+    colors.primary(
+      `   ${symbols.topLeft}${symbols.horizontal.repeat(width)}${symbols.topRight}`
+    )
+  );
+
+  // Title with stars
+  const title = `${symbols.star}  F R I D A Y  ${symbols.star}`;
+  const titlePadding = Math.floor((width - title.length) / 2);
+  lines.push(
+    colors.primary(`   ${symbols.vertical}`) +
+      ' '.repeat(titlePadding) +
+      colors.primary.bold(title) +
+      ' '.repeat(width - titlePadding - title.length) +
+      colors.primary(symbols.vertical)
+  );
+
+  // Subtitle
+  const subtitle = 'Claude-primary Agent';
+  const subtitlePadding = Math.floor((width - subtitle.length) / 2);
+  lines.push(
+    colors.primary(`   ${symbols.vertical}`) +
+      ' '.repeat(subtitlePadding) +
+      colors.textDim(subtitle) +
+      ' '.repeat(width - subtitlePadding - subtitle.length) +
+      colors.primary(symbols.vertical)
+  );
+
+  // Box bottom
+  lines.push(
+    colors.primary(
+      `   ${symbols.bottomLeft}${symbols.horizontal.repeat(width)}${symbols.bottomRight}`
+    )
+  );
+
+  // Empty line
+  lines.push('');
+
+  // Status info (left-aligned with labels)
+  const workspaceDisplay = options.workspace
+    ? shortenPath(options.workspace)
+    : colors.textDim('(read-only)');
+  lines.push(`   ${colors.label('Workspace')}   ${workspaceDisplay}`);
+
+  const modeDisplay = getModeDisplay(options.mode);
+  lines.push(`   ${colors.label('Mode')}        ${modeDisplay}`);
+
+  const advisorsDisplay =
+    options.advisors.length > 0
+      ? options.advisors.join(', ')
+      : colors.textDim('none');
+  lines.push(`   ${colors.label('Advisors')}    ${advisorsDisplay}`);
+
+  // Empty line
+  lines.push('');
+
+  // Help hint
+  lines.push(
+    `   ${colors.textDim('Type your task, or')} ${colors.text('!help')} ${colors.textDim('for commands.')}`
+  );
+
+  return lines.join('\n');
+}
+
+/**
+ * Get styled prompt string
+ */
+export function getPrompt(): string {
+  return `${colors.primary(symbols.prompt)} ${colors.text('friday')} ${colors.primary(symbols.chevron)} `;
+}
+
+/**
+ * Display mode with appropriate color
+ */
+export function getModeDisplay(
+  mode: 'dry-run' | 'approve' | 'apply' | string
+): string {
+  switch (mode) {
+    case 'apply':
+      return colors.success('apply');
+    case 'approve':
+      return colors.secondary('approve');
+    case 'dry-run':
+    default:
+      return colors.warning('dry-run');
+  }
+}
+
+/**
+ * Render thinking indicator
+ */
+export function renderThinking(): string {
+  return `\n${colors.textDim(`${symbols.thinking} Claude is thinking...`)}\n`;
+}
+
+/**
+ * Render Claude's response with styled header
+ */
+export function renderClaudeResponse(content: string): string {
+  const width = 50;
+  const header =
+    colors.success(`${symbols.sectionStart} Claude `) +
+    colors.success(symbols.horizontal.repeat(width - 10));
+  const footer = colors.success(
+    `${symbols.sectionEnd}${symbols.horizontal.repeat(width - 1)}`
+  );
+
+  return `\n${header}\n${symbols.sectionLine} \n${content}\n\n${footer}\n`;
+}
+
+/**
+ * Render a section line for Claude's response (visual separator)
+ */
+export function renderResponseStart(): string {
+  const width = 50;
+  return (
+    '\n' +
+    colors.success(`${symbols.sectionStart} Claude `) +
+    colors.success(symbols.horizontal.repeat(width - 10))
+  );
+}
+
+export function renderResponseEnd(): string {
+  const width = 50;
+  return colors.success(
+    `${symbols.sectionEnd}${symbols.horizontal.repeat(width - 1)}`
+  );
+}
+
+/**
+ * Render tool call indicator
+ */
+export function renderToolCall(toolName: string): string {
+  return colors.textDim(`${symbols.gear} ${toolName}`);
+}
+
+/**
+ * Render advisor consultation
+ */
+export function renderAdvisorResult(
+  model: string,
+  error?: string
+): string {
+  if (error) {
+    return colors.warning(`${symbols.bullet} [${model}] Error: ${error}`);
+  }
+  return colors.textDim(`${symbols.bullet} [${model}] consulted`);
+}
+
+/**
+ * Render system message
+ */
+export function renderSystemMessage(message: string): string {
+  return colors.textDim(`${symbols.bullet} ${message}`);
+}
+
+/**
+ * Render error message (readable but not alarming)
+ */
+export function renderError(message: string): string {
+  return colors.error(`\n${symbols.cross} Error: ${message}\n`);
+}
+
+/**
+ * Render success message
+ */
+export function renderSuccess(message: string): string {
+  return colors.success(`${symbols.check} ${message}`);
+}
+
+/**
+ * Render warning message
+ */
+export function renderWarning(message: string): string {
+  return colors.warning(`${symbols.bullet} ${message}`);
+}
+
+/**
+ * Render info message
+ */
+export function renderInfo(message: string): string {
+  return colors.info(`${symbols.bullet} ${message}`);
+}
+
+/**
+ * Shorten a path for display
+ */
+export function shortenPath(path: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (home && path.startsWith(home)) {
+    return '~' + path.slice(home.length);
+  }
+  return path;
+}
+
+/**
+ * Render status display for !status command
+ */
+export function renderStatus(options: {
+  workspace?: string;
+  cwd: string;
+  mode: 'dry-run' | 'approve' | 'apply' | string;
+  advisors: string[];
+  messageCount: number;
+  durationSeconds: number;
+}): string {
+  const lines: string[] = [];
+
+  lines.push(`\n${colors.primary('Session status:')}`);
+  lines.push(
+    `  ${colors.label('Workspace')}  ${options.workspace ? shortenPath(options.workspace) : colors.textDim('(read-only)')}`
+  );
+  lines.push(`  ${colors.label('CWD')}        ${shortenPath(options.cwd)}`);
+  lines.push(`  ${colors.label('Mode')}       ${getModeDisplay(options.mode)}`);
+  lines.push(
+    `  ${colors.label('Advisors')}   ${options.advisors.length > 0 ? options.advisors.join(', ') : colors.textDim('none')}`
+  );
+  lines.push(
+    `  ${colors.label('Messages')}   ${options.messageCount}`
+  );
+
+  const mins = Math.floor(options.durationSeconds / 60);
+  const secs = options.durationSeconds % 60;
+  lines.push(`  ${colors.label('Duration')}   ${mins}m ${secs}s`);
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Render help text
+ */
+export function renderHelp(): string {
+  const lines: string[] = [];
+
+  lines.push(`\n${colors.primary('Commands:')}`);
+  lines.push(
+    `  ${colors.text('!exit, !quit, !q')}     ${colors.textDim('Exit the session')}`
+  );
+  lines.push(
+    `  ${colors.text('!help, !h, !?')}        ${colors.textDim('Show this help')}`
+  );
+  lines.push(
+    `  ${colors.text('!diff, !d')}            ${colors.textDim('Show current git diff')}`
+  );
+  lines.push(
+    `  ${colors.text('!status, !s')}          ${colors.textDim('Show session status')}`
+  );
+  lines.push(
+    `  ${colors.text('!run <cmd>, !r')}       ${colors.textDim('Run an allowed command')}`
+  );
+  lines.push(
+    `  ${colors.text('!clear, !c')}           ${colors.textDim('Clear conversation history')}`
+  );
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Render goodbye message
+ */
+export function renderGoodbye(): string {
+  return colors.textDim(`\n${symbols.bullet} Goodbye!\n`);
+}
+
+/**
+ * Render interrupted message
+ */
+export function renderInterrupted(): string {
+  return colors.textDim(`\n\n${symbols.bullet} Interrupted. Goodbye!\n`);
+}

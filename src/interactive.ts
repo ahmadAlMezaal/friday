@@ -13,7 +13,6 @@
  */
 
 import * as readline from 'readline';
-import chalk from 'chalk';
 import {
   InteractiveSession,
   SessionMessage,
@@ -23,6 +22,25 @@ import {
 import { runOrchestrator } from './router.js';
 import { gitDiff, runCommand } from './mcp/tools/index.js';
 import { ALLOWED_COMMANDS } from './types.js';
+import {
+  colors,
+  symbols,
+  renderHeader,
+  getPrompt,
+  getModeDisplay,
+  renderThinking,
+  renderResponseStart,
+  renderResponseEnd,
+  renderToolCall,
+  renderAdvisorResult,
+  renderStatus,
+  renderHelp,
+  renderGoodbye,
+  renderInterrupted,
+  renderError,
+  renderSystemMessage,
+  shortenPath,
+} from './ui.js';
 
 // Built-in command handlers
 interface BuiltinCommand {
@@ -38,7 +56,7 @@ const BUILTIN_COMMANDS: BuiltinCommand[] = [
     aliases: ['quit', 'q'],
     description: 'Exit the interactive session',
     handler: async () => {
-      console.log(chalk.gray('\nGoodbye!\n'));
+      console.log(renderGoodbye());
       return false;
     },
   },
@@ -47,20 +65,13 @@ const BUILTIN_COMMANDS: BuiltinCommand[] = [
     aliases: ['h', '?'],
     description: 'Show available commands',
     handler: async () => {
-      console.log(chalk.cyan('\nBuilt-in commands:'));
-      console.log(chalk.white('  !exit, !quit, !q') + chalk.gray(' - Exit the session'));
-      console.log(chalk.white('  !help, !h, !?') + chalk.gray('    - Show this help'));
-      console.log(chalk.white('  !diff') + chalk.gray('            - Show current git diff'));
-      console.log(chalk.white('  !status') + chalk.gray('          - Show session status'));
-      console.log(chalk.white('  !run <cmd>') + chalk.gray('       - Run an allowed command'));
-      console.log(chalk.white('  !clear') + chalk.gray('           - Clear conversation history'));
+      console.log(renderHelp());
+      console.log(colors.primary('Allowed commands for !run:'));
+      console.log(colors.textDim('  ' + ALLOWED_COMMANDS.join(', ')));
       console.log('');
-      console.log(chalk.cyan('Allowed commands for !run:'));
-      console.log(chalk.gray('  ' + ALLOWED_COMMANDS.join(', ')));
-      console.log('');
-      console.log(chalk.cyan('Usage:'));
-      console.log(chalk.gray('  Type any task to send to Claude'));
-      console.log(chalk.gray('  Prefix with ! for built-in commands'));
+      console.log(colors.primary('Usage:'));
+      console.log(colors.textDim('  Type any task to send to Claude'));
+      console.log(colors.textDim('  Prefix with ! for built-in commands'));
       console.log('');
       return true;
     },
@@ -73,13 +84,13 @@ const BUILTIN_COMMANDS: BuiltinCommand[] = [
       try {
         const result = await gitDiff({ cwd: session.cwd });
         if (result.diff && !result.diff.includes('No changes')) {
-          console.log(chalk.cyan('\nGit diff:'));
+          console.log(`\n${colors.primary('Git diff:')}`);
           console.log(result.diff);
         } else {
-          console.log(chalk.gray('\nNo uncommitted changes.\n'));
+          console.log(renderSystemMessage('No uncommitted changes.'));
         }
       } catch (error) {
-        console.log(chalk.yellow('\nNot a git repository or git error.\n'));
+        console.log(colors.warning('\nNot a git repository or git error.\n'));
       }
       return true;
     },
@@ -90,17 +101,16 @@ const BUILTIN_COMMANDS: BuiltinCommand[] = [
     description: 'Show session status',
     handler: async (session) => {
       const duration = Math.round((Date.now() - session.startedAt.getTime()) / 1000);
-      const mins = Math.floor(duration / 60);
-      const secs = duration % 60;
+      const mode = session.options.apply ? 'apply' : session.options.approve ? 'approve' : 'dry-run';
 
-      console.log(chalk.cyan('\nSession status:'));
-      console.log(chalk.white('  Workspace: ') + (session.workspace || chalk.gray('(none - read-only)')));
-      console.log(chalk.white('  CWD: ') + session.cwd);
-      console.log(chalk.white('  Mode: ') + getModeLabel(session.options));
-      console.log(chalk.white('  Advisors: ') + (session.options.advisors.length > 0 ? session.options.advisors.join(', ') : chalk.gray('none')));
-      console.log(chalk.white('  Messages: ') + session.messages.length);
-      console.log(chalk.white('  Duration: ') + `${mins}m ${secs}s`);
-      console.log('');
+      console.log(renderStatus({
+        workspace: session.workspace,
+        cwd: session.cwd,
+        mode,
+        advisors: session.options.advisors,
+        messageCount: session.messages.length,
+        durationSeconds: duration,
+      }));
       return true;
     },
   },
@@ -111,30 +121,30 @@ const BUILTIN_COMMANDS: BuiltinCommand[] = [
     handler: async (session, args) => {
       const cmd = args.trim();
       if (!cmd) {
-        console.log(chalk.yellow('\nUsage: !run <command>'));
-        console.log(chalk.gray('Allowed: ' + ALLOWED_COMMANDS.join(', ') + '\n'));
+        console.log(colors.warning('\nUsage: !run <command>'));
+        console.log(colors.textDim('Allowed: ' + ALLOWED_COMMANDS.join(', ') + '\n'));
         return true;
       }
 
       try {
-        console.log(chalk.cyan(`\nRunning: ${cmd}\n`));
+        console.log(`\n${colors.primary(`${symbols.gear} Running:`)} ${cmd}\n`);
         const result = await runCommand(cmd, { cwd: session.cwd });
 
         if (result.exitCode === 0) {
-          console.log(chalk.green('Command succeeded'));
+          console.log(colors.success(`${symbols.check} Command succeeded`));
         } else {
-          console.log(chalk.red(`Command failed (exit code: ${result.exitCode})`));
+          console.log(colors.error(`${symbols.cross} Command failed (exit code: ${result.exitCode})`));
         }
 
         if (result.stdout) {
           console.log(result.stdout);
         }
         if (result.stderr) {
-          console.log(chalk.yellow(result.stderr));
+          console.log(colors.warning(result.stderr));
         }
         console.log('');
       } catch (error) {
-        console.log(chalk.red(`Error: ${error instanceof Error ? error.message : 'Unknown error'}\n`));
+        console.log(renderError(error instanceof Error ? error.message : 'Unknown error'));
       }
       return true;
     },
@@ -145,17 +155,11 @@ const BUILTIN_COMMANDS: BuiltinCommand[] = [
     description: 'Clear conversation history',
     handler: async (session) => {
       session.messages = [];
-      console.log(chalk.gray('\nConversation history cleared.\n'));
+      console.log(renderSystemMessage('Conversation history cleared.\n'));
       return true;
     },
   },
 ];
-
-function getModeLabel(options: Omit<CliOptions, 'task'>): string {
-  if (options.apply) return chalk.green('apply');
-  if (options.approve) return chalk.cyan('approve');
-  return chalk.yellow('dry-run');
-}
 
 function parseBuiltinCommand(input: string): { command: string; args: string } | null {
   if (!input.startsWith('!')) return null;
@@ -224,36 +228,32 @@ async function processTask(
     ? `${historyContext}\n\n## Current Task\n${task}`
     : task;
 
-  console.log(chalk.blue('\nClaude is thinking...\n'));
+  console.log(renderThinking());
 
   try {
     const result = await runOrchestrator(taskWithContext, options);
 
     // Display tool calls if verbose
     if (session.options.verbose && result.toolCalls.length > 0) {
-      console.log(chalk.gray('Tool calls:'));
       for (const call of result.toolCalls) {
-        console.log(chalk.gray(`  ${call.tool}`));
+        console.log(renderToolCall(call.tool));
       }
       console.log('');
     }
 
     // Display advisor consultations if any
     if (result.advisorResponses.length > 0) {
-      console.log(chalk.magenta('Advisors consulted:'));
+      console.log(colors.primary('Advisors:'));
       for (const advisor of result.advisorResponses) {
-        if (advisor.error) {
-          console.log(chalk.yellow(`  [${advisor.model}] Error: ${advisor.error}`));
-        } else {
-          console.log(chalk.gray(`  [${advisor.model}] Response received`));
-        }
+        console.log('  ' + renderAdvisorResult(advisor.model, advisor.error));
       }
       console.log('');
     }
 
-    // Display Claude's response
-    console.log(chalk.green('Claude:'));
+    // Display Claude's response with styled header
+    console.log(renderResponseStart());
     console.log(result.response.content);
+    console.log(renderResponseEnd());
     console.log('');
 
     // Add assistant response to history
@@ -263,7 +263,7 @@ async function processTask(
       timestamp: new Date(),
     });
   } catch (error) {
-    console.log(chalk.red(`Error: ${error instanceof Error ? error.message : 'Unknown error'}\n`));
+    console.log(renderError(error instanceof Error ? error.message : 'Unknown error'));
   }
 }
 
@@ -287,21 +287,22 @@ export async function runInteractiveSession(options: InteractiveOptions): Promis
     startedAt: new Date(),
   };
 
-  // Print header
-  console.log(chalk.cyan('\n' + '='.repeat(56)));
-  console.log(chalk.cyan.bold('  Friday - Claude-primary Agent'));
-  console.log(chalk.cyan('='.repeat(56)));
-  console.log('');
-  console.log(chalk.white('Workspace: ') + (session.workspace || chalk.gray('(none - read-only)')));
-  console.log(chalk.white('Mode: ') + getModeLabel(session.options));
-  console.log(chalk.gray('Type !help for commands, !exit to quit'));
+  // Determine mode for header
+  const mode = session.options.apply ? 'apply' : session.options.approve ? 'approve' : 'dry-run';
+
+  // Print styled header
+  console.log('\n' + renderHeader({
+    workspace: session.workspace,
+    mode: mode as 'dry-run' | 'approve' | 'apply',
+    advisors: session.options.advisors,
+  }));
   console.log('');
 
-  // Create readline interface
+  // Create readline interface with styled prompt
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: chalk.cyan('friday> '),
+    prompt: getPrompt(),
   });
 
   // Handle line input
@@ -325,8 +326,8 @@ export async function runInteractiveSession(options: InteractiveOptions): Promis
           return;
         }
       } else {
-        console.log(chalk.yellow(`Unknown command: !${builtin.command}`));
-        console.log(chalk.gray('Type !help for available commands\n'));
+        console.log(colors.warning(`Unknown command: !${builtin.command}`));
+        console.log(colors.textDim('Type !help for available commands\n'));
       }
       rl.prompt();
       return;
@@ -344,7 +345,7 @@ export async function runInteractiveSession(options: InteractiveOptions): Promis
 
   // Handle SIGINT (Ctrl+C)
   rl.on('SIGINT', () => {
-    console.log(chalk.gray('\n\nInterrupted. Goodbye!\n'));
+    console.log(renderInterrupted());
     rl.close();
   });
 

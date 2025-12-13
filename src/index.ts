@@ -8,6 +8,19 @@ import { runOrchestrator } from './router.js';
 import { runMCPServer } from './mcp/server.js';
 import { resolveWorkspace } from './workspace.js';
 import { runInteractiveSession } from './interactive.js';
+import {
+  colors,
+  symbols,
+  renderHeader,
+  getModeDisplay,
+  renderThinking,
+  renderResponseStart,
+  renderResponseEnd,
+  renderToolCall,
+  renderAdvisorResult,
+  renderError,
+  shortenPath,
+} from './ui.js';
 
 // Capture the original process.cwd() BEFORE any Yarn --cwd override takes effect
 // This is the directory from which the user invoked the command
@@ -88,64 +101,51 @@ program
       const config = loadConfig(options);
       validateConfig(config);
 
-      // Print header
-      console.log(chalk.cyan('\n╔══════════════════════════════════════════════════════╗'));
-      console.log(chalk.cyan('║         Friday - Claude-primary Agent                 ║'));
-      console.log(chalk.cyan('╚══════════════════════════════════════════════════════╝\n'));
+      // Determine mode for display
+      const mode = options.apply ? 'apply' : options.approve ? 'approve' : 'dry-run';
 
-      console.log(chalk.bold('Task:'), options.task);
-      console.log(
-        chalk.bold('Advisors:'),
-        options.advisors.length > 0
-          ? options.advisors.join(', ')
-          : chalk.gray('none (Claude works independently)')
-      );
-      const modeLabel = options.apply
-        ? chalk.green('apply')
-        : options.approve
-          ? chalk.cyan('approve')
-          : chalk.yellow('dry-run');
-      console.log(chalk.bold('Mode:'), modeLabel);
-      console.log(
-        chalk.bold('Workspace:'),
-        options.workspace
-          ? chalk.white(options.workspace)
-          : chalk.gray('(none - read-only mode)')
-      );
-      console.log(chalk.bold('Limits:'), `${options.maxToolCalls} tool calls, ${options.maxTurns} turns`);
+      // Print styled header
+      console.log('\n' + renderHeader({
+        workspace: options.workspace,
+        mode: mode as 'dry-run' | 'approve' | 'apply',
+        advisors: options.advisors,
+      }));
+      console.log('');
+
+      // Task info
+      console.log(`   ${colors.label('Task')}        ${options.task}`);
+      console.log(`   ${colors.label('Limits')}      ${options.maxToolCalls} tool calls, ${options.maxTurns} turns`);
       console.log('');
 
       // Run orchestrator
-      console.log(chalk.blue('▶ Claude is analyzing your task...\n'));
+      console.log(renderThinking());
       const result = await runOrchestrator(options.task, options);
 
       // Display tool calls if verbose
       if (options.verbose && result.toolCalls.length > 0) {
-        console.log(chalk.gray('───────────────────────────────────────────────'));
-        console.log(chalk.gray.bold('Tool Calls:'));
+        console.log(colors.textDim('─'.repeat(50)));
+        console.log(colors.label('Tool Calls:'));
         for (const call of result.toolCalls) {
-          console.log(chalk.gray(`  • ${call.tool}`));
-          if (call.tool.startsWith('ask_')) {
-            console.log(chalk.gray(`    Advisor response received`));
-          }
+          console.log('  ' + renderToolCall(call.tool));
         }
         console.log('');
       }
 
       // Display advisor consultations
       if (result.advisorResponses.length > 0) {
-        console.log(chalk.magenta('═══════════════════════════════════════════════════════'));
-        console.log(chalk.magenta.bold(' ADVISOR CONSULTATIONS'));
-        console.log(chalk.magenta('═══════════════════════════════════════════════════════\n'));
+        console.log(colors.primary('─'.repeat(50)));
+        console.log(colors.primary.bold(' Advisor Consultations'));
+        console.log(colors.primary('─'.repeat(50)));
+        console.log('');
 
         for (const advisor of result.advisorResponses) {
           if (advisor.error) {
-            console.log(chalk.yellow(`[${advisor.model}] Error: ${advisor.error}`));
+            console.log(renderAdvisorResult(advisor.model, advisor.error));
           } else {
-            console.log(chalk.gray(`[${advisor.model}]`));
+            console.log(colors.textDim(`[${advisor.model}]`));
             console.log(advisor.response.substring(0, 500));
             if (advisor.response.length > 500) {
-              console.log(chalk.gray('... (truncated)'));
+              console.log(colors.textDim('... (truncated)'));
             }
           }
           console.log('');
@@ -153,21 +153,20 @@ program
       }
 
       // Display Claude's response
-      console.log(chalk.green('═══════════════════════════════════════════════════════'));
-      console.log(chalk.green.bold(' CLAUDE\'S RESPONSE'));
-      console.log(chalk.green('═══════════════════════════════════════════════════════\n'));
+      console.log(renderResponseStart());
       console.log(result.response.content);
+      console.log(renderResponseEnd());
       console.log('');
 
       // Summary
-      console.log(chalk.gray('───────────────────────────────────────────────────────'));
-      console.log(chalk.gray('Summary:'));
-      console.log(chalk.gray(`  • Model: ${result.response.model}`));
-      console.log(chalk.gray(`  • Tool calls: ${result.toolCalls.length}`));
-      console.log(chalk.gray(`  • Advisors consulted: ${result.advisorResponses.length}`));
+      console.log(colors.textDim('─'.repeat(50)));
+      console.log(colors.textDim('Summary:'));
+      console.log(colors.textDim(`  ${symbols.bullet} Model: ${result.response.model}`));
+      console.log(colors.textDim(`  ${symbols.bullet} Tool calls: ${result.toolCalls.length}`));
+      console.log(colors.textDim(`  ${symbols.bullet} Advisors consulted: ${result.advisorResponses.length}`));
       console.log('');
     } catch (error) {
-      console.error(chalk.red('\nError:'), error instanceof Error ? error.message : error);
+      console.error(renderError(error instanceof Error ? error.message : String(error)));
       process.exit(1);
     }
   });
@@ -216,17 +215,17 @@ program
     const { repoSearch } = await import('./mcp/tools/index.js');
     const cwd = opts.cwd || process.cwd();
 
-    console.log(chalk.cyan(`\nSearching for: "${query}"\n`));
+    console.log(`\n${colors.primary(`${symbols.gear} Searching for:`)} "${query}"\n`);
 
     const result = await repoSearch(query, { cwd });
 
     if (result.matches.length === 0) {
-      console.log(chalk.yellow('No matches found.'));
+      console.log(colors.warning('No matches found.'));
     } else {
-      console.log(chalk.green(`Found ${result.matches.length} matches:\n`));
+      console.log(colors.success(`${symbols.check} Found ${result.matches.length} matches:\n`));
       for (const match of result.matches) {
-        console.log(chalk.bold(`${match.file}:${match.line}`));
-        console.log(chalk.gray(`  ${match.preview}`));
+        console.log(colors.label(`${match.file}:${match.line}`));
+        console.log(colors.textDim(`  ${match.preview}`));
         console.log('');
       }
     }
@@ -255,24 +254,24 @@ program
     const { runCommand } = await import('./mcp/tools/index.js');
     const cwd = opts.cwd || process.cwd();
 
-    console.log(chalk.cyan(`\nRunning: ${cmd}\n`));
+    console.log(`\n${colors.primary(`${symbols.gear} Running:`)} ${cmd}\n`);
 
     const result = await runCommand(cmd, { cwd });
 
     if (result.exitCode === 0) {
-      console.log(chalk.green('Command succeeded'));
+      console.log(colors.success(`${symbols.check} Command succeeded`));
     } else {
-      console.log(chalk.red(`Command failed (exit code: ${result.exitCode})`));
+      console.log(colors.error(`${symbols.cross} Command failed (exit code: ${result.exitCode})`));
     }
 
     if (result.stdout) {
-      console.log(chalk.bold('\nStdout:'));
+      console.log(colors.label('\nStdout:'));
       console.log(result.stdout);
     }
 
     if (result.stderr) {
-      console.log(chalk.bold('\nStderr:'));
-      console.log(result.stderr);
+      console.log(colors.label('\nStderr:'));
+      console.log(colors.warning(result.stderr));
     }
   });
 
@@ -346,7 +345,7 @@ program
       // Start interactive session
       await runInteractiveSession(options);
     } catch (error) {
-      console.error(chalk.red('\nError:'), error instanceof Error ? error.message : error);
+      console.error(renderError(error instanceof Error ? error.message : String(error)));
       process.exit(1);
     }
   });
