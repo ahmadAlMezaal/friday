@@ -6,6 +6,14 @@ export interface ReadFileOptions {
   cwd: string;
 }
 
+// Custom error class for file not found - allows graceful handling
+export class FileNotFoundError extends Error {
+  constructor(public path: string) {
+    super(`File not found: ${path}`);
+    this.name = 'FileNotFoundError';
+  }
+}
+
 export async function readFile(
   path: string,
   options: ReadFileOptions
@@ -21,6 +29,10 @@ export async function readFile(
     const content = await fsReadFile(fullPath, 'utf-8');
     return { content };
   } catch (error) {
+    // Check for file not found error (ENOENT)
+    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new FileNotFoundError(path);
+    }
     const message = error instanceof Error ? error.message : 'Unknown error';
     throw new Error(`Failed to read file ${path}: ${message}`);
   }

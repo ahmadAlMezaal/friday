@@ -2,25 +2,28 @@
  * Shared Approval UX Module
  *
  * Provides consistent approval flow for file writes with:
- * - Clear diff display
- * - Multiple response options: yes/no/skip/abort
+ * - Keyboard-driven selector (arrow keys, Enter, Esc)
+ * - Clear diff display with plain-English summary
  * - Visual formatting
  */
 
-import { createInterface } from 'readline';
+import * as readline from 'readline';
 import { createTwoFilesPatch } from 'diff';
 import chalk from 'chalk';
+import select from '@inquirer/select';
 import { ApprovalChoice } from '../../types.js';
 
-// Visual elements
+// Visual elements - standardized emojis
 const symbols = {
-  write: '📝',
+  write: '✍️',
   patch: '🔧',
   divider: '─',
-  check: '✓',
-  cross: '✗',
-  skip: '⊘',
-  abort: '⏹',
+  check: '✅',
+  cross: '❌',
+  skip: '⏭️',
+  abort: '🛑',
+  pointer: '❯',
+  info: 'ℹ️',
 };
 
 const colors = {
@@ -34,62 +37,179 @@ const colors = {
     create: chalk.green.bold,
     modify: chalk.yellow.bold,
   },
+  selected: chalk.cyan.bold,
+  unselected: chalk.gray,
 };
 
 /**
- * Format approval prompt options
- */
-function formatOptions(): string {
-  return [
-    colors.success('[y]es'),
-    colors.error('[n]o'),
-    colors.warning('[s]kip'),
-    colors.error.bold('[a]bort all'),
-  ].join(' / ');
-}
-
-/**
- * Parse user input to approval choice
- */
-function parseApprovalChoice(input: string): ApprovalChoice {
-  const normalized = input.toLowerCase().trim();
-
-  if (normalized === 'y' || normalized === 'yes') {
-    return 'yes';
-  }
-  if (normalized === 'n' || normalized === 'no') {
-    return 'no';
-  }
-  if (normalized === 's' || normalized === 'skip') {
-    return 'skip';
-  }
-  if (normalized === 'a' || normalized === 'abort') {
-    return 'abort';
-  }
-
-  // Default to 'no' for safety (same as before)
-  return 'no';
-}
-
-/**
- * Prompt user for approval with enhanced options
+ * Keyboard-driven approval selector using @inquirer/select
+ * Uses arrow keys to navigate, Enter to select, Esc to abort
+ * Renders cleanly in place without duplication
  */
 export async function promptForApproval(message: string): Promise<ApprovalChoice> {
-  const rl = createInterface({
+  // Fall back to simple prompt if not a TTY
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return promptForApprovalSimple(message);
+  }
+
+  try {
+    const answer = await select<ApprovalChoice>({
+      message: colors.primary(message),
+      choices: [
+        { name: 'Apply', value: 'yes' as ApprovalChoice },
+        { name: 'Skip', value: 'skip' as ApprovalChoice },
+        { name: 'Reject', value: 'no' as ApprovalChoice },
+      ],
+      theme: {
+        prefix: '',
+        style: {
+          highlight: (text: string) => colors.selected(text),
+          message: (text: string) => text, // Already styled
+        },
+      },
+    });
+
+    return answer;
+  } catch (error) {
+    // User pressed Esc or Ctrl+C - treat as abort
+    if (error instanceof Error && error.message.includes('User force closed')) {
+      return 'abort';
+    }
+    // For any other cancellation (Esc key), return abort
+    return 'abort';
+  }
+}
+
+/**
+ * Simple fallback prompt for non-TTY environments
+ */
+async function promptForApprovalSimple(message: string): Promise<ApprovalChoice> {
+  const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
 
   return new Promise((resolve) => {
-    rl.question(`${message} ${formatOptions()}: `, (answer) => {
+    rl.question(`${message} [y]es/[s]kip/[n]o: `, (answer) => {
       rl.close();
-      resolve(parseApprovalChoice(answer));
+      const normalized = answer.toLowerCase().trim();
+      if (normalized === 'y' || normalized === 'yes') resolve('yes');
+      else if (normalized === 's' || normalized === 'skip') resolve('skip');
+      else resolve('no');
     });
   });
 }
 
 /**
- * Display a file write proposal with diff
+ * Generate a plain-English summary of changes from a diff
+ * This is deterministic - no LLM call required
+ */
+function generateDiffSummary(
+  path: string,
+  existingContent: string,
+  newContent: string,
+  isNewFile: boolean
+): string[] {
+  const summary: string[] = [];
+  const newLines = newContent.split('\n').length;
+
+  if (isNewFile) {
+    summary.push(`Create new file ${path} (${newLines} lines)`);
+    // Detect file type and add context
+    if (path.endsWith('.css') || path.endsWith('.scss')) {
+      const classCount = (newContent.match(/\.[a-zA-Z][\w-]*/g) || []).length;
+      if (classCount > 0) summary.push(`  • ${classCount} CSS classes defined`);
+    } else if (path.endsWith('.ts') || path.endsWith('.js') || path.endsWith('.tsx') || path.endsWith('.jsx')) {
+      const funcCount = (newContent.match(/(?:function\s+\w+|const\s+\w+\s*=\s*(?:async\s*)?\(|=>\s*{)/g) || []).length;
+      const classCount = (newContent.match(/class\s+\w+/g) || []).length;
+      if (funcCount > 0) summary.push(`  • ${funcCount} functions`);
+      if (classCount > 0) summary.push(`  • ${classCount} classes`);
+    } else if (path.endsWith('.html')) {
+      summary.push(`  • HTML document`);
+    }
+    return summary;
+  }
+
+  // For modifications, analyze the diff
+  const oldLines = existingContent.split('\n');
+  const newLinesArr = newContent.split('\n');
+
+  let addedCount = 0;
+  let removedCount = 0;
+
+  // Simple line-based diff analysis
+  const oldSet = new Set(oldLines.map(l => l.trim()));
+  const newSet = new Set(newLinesArr.map(l => l.trim()));
+
+  for (const line of newLinesArr) {
+    if (line.trim() && !oldSet.has(line.trim())) addedCount++;
+  }
+  for (const line of oldLines) {
+    if (line.trim() && !newSet.has(line.trim())) removedCount++;
+  }
+
+  summary.push(`Modify ${path}: +${addedCount} / -${removedCount} lines`);
+
+  // Detect patterns in changes
+  const changes: string[] = [];
+
+  // CSS patterns
+  if (path.endsWith('.css') || path.endsWith('.scss')) {
+    const removedGradients = existingContent.includes('gradient') && !newContent.includes('gradient');
+    const removedAnimations = existingContent.includes('animation') && !newContent.includes('animation');
+    if (removedGradients) changes.push('remove gradients');
+    if (removedAnimations) changes.push('remove animations');
+
+    const addedFlexbox = !existingContent.includes('display: flex') && newContent.includes('display: flex');
+    const addedGrid = !existingContent.includes('display: grid') && newContent.includes('display: grid');
+    if (addedFlexbox) changes.push('add flexbox layout');
+    if (addedGrid) changes.push('add grid layout');
+  }
+
+  // JS/TS patterns
+  if (path.endsWith('.ts') || path.endsWith('.js') || path.endsWith('.tsx') || path.endsWith('.jsx')) {
+    const removedClasses = (existingContent.match(/class\s+\w+/g) || []).length - (newContent.match(/class\s+\w+/g) || []).length;
+    if (removedClasses > 0) changes.push('simplify class structure');
+
+    const addedAsync = !existingContent.includes('async') && newContent.includes('async');
+    if (addedAsync) changes.push('add async handling');
+
+    const addedFetch = !existingContent.includes('fetch(') && newContent.includes('fetch(');
+    if (addedFetch) changes.push('add API calls');
+
+    const removedLocalStorage = existingContent.includes('localStorage') && !newContent.includes('localStorage');
+    if (removedLocalStorage) changes.push('remove localStorage');
+  }
+
+  if (changes.length > 0) {
+    summary.push(`  • ${changes.slice(0, 3).join(', ')}`);
+  }
+
+  return summary;
+}
+
+/**
+ * Generate a plain-English summary from a unified diff string
+ */
+function generatePatchSummary(path: string, unifiedDiff: string): string[] {
+  const summary: string[] = [];
+
+  const lines = unifiedDiff.split('\n');
+  let addedCount = 0;
+  let removedCount = 0;
+
+  for (const line of lines) {
+    if (line.startsWith('+') && !line.startsWith('+++')) addedCount++;
+    if (line.startsWith('-') && !line.startsWith('---')) removedCount++;
+  }
+
+  summary.push(`Patch ${path}: +${addedCount} / -${removedCount} lines`);
+
+  return summary;
+}
+
+/**
+ * Display a file write proposal with diff and plain-English summary
  */
 export function displayWriteProposal(
   path: string,
@@ -104,6 +224,15 @@ export function displayWriteProposal(
   console.log('\n' + colors.dim(divider));
   console.log(`${symbols.write} ${actionColor(action)} ${colors.file(path)}`);
   console.log(colors.dim(divider));
+
+  // Plain-English summary before the diff
+  const summary = generateDiffSummary(path, existingContent, newContent, isNewFile);
+  console.log('');
+  console.log(colors.primary.bold('Summary:'));
+  for (const line of summary) {
+    console.log(chalk.white(`  ${line}`));
+  }
+  console.log('');
 
   const patch = createTwoFilesPatch(
     path,
@@ -121,7 +250,7 @@ export function displayWriteProposal(
 }
 
 /**
- * Display a patch proposal
+ * Display a patch proposal with plain-English summary
  */
 export function displayPatchProposal(path: string, unifiedDiff: string): void {
   const divider = symbols.divider.repeat(60);
@@ -129,6 +258,15 @@ export function displayPatchProposal(path: string, unifiedDiff: string): void {
   console.log('\n' + colors.dim(divider));
   console.log(`${symbols.patch} ${colors.action.modify('PATCH')} ${colors.file(path)}`);
   console.log(colors.dim(divider));
+
+  // Plain-English summary before the diff
+  const summary = generatePatchSummary(path, unifiedDiff);
+  console.log('');
+  console.log(colors.primary.bold('Summary:'));
+  for (const line of summary) {
+    console.log(chalk.white(`  ${line}`));
+  }
+  console.log('');
 
   const colorizedDiff = colorizeDiff(unifiedDiff);
   console.log(colorizedDiff);
@@ -177,7 +315,7 @@ export function displayApprovalResult(
       console.log(colors.warning(`${symbols.skip} Skipped: ${path}`));
       break;
     case 'abort':
-      console.log(colors.error.bold(`${symbols.abort} Aborting all remaining changes`));
+      console.log(colors.error.bold(`${symbols.abort} Aborted`));
       break;
   }
 }

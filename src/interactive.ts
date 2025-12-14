@@ -21,6 +21,8 @@ import {
   InteractiveOptions,
   CliOptions,
   WriteMode,
+  SessionTokenUsage,
+  TokenUsage,
 } from './types.js';
 import { runOrchestrator } from './router.js';
 import { gitDiff, runCommand } from './mcp/tools/index.js';
@@ -28,12 +30,12 @@ import { ALLOWED_COMMANDS } from './types.js';
 import {
   colors,
   symbols,
+  emojis,
   renderHeader,
   getPrompt,
   getModeDisplay,
   renderThinking,
   renderResponseStart,
-  renderResponseEnd,
   renderToolCall,
   renderAdvisorResult,
   renderStatus,
@@ -54,6 +56,9 @@ import {
   renderPlanModeEnabled,
   renderPlanModeDisabled,
   renderPlanConfirmation,
+  stopProgress,
+  renderTokenUsage,
+  renderUsageSummary,
 } from './ui.js';
 import { ActivityEvent, ActivityCallback } from './types.js';
 
@@ -72,6 +77,38 @@ function getWriteMode(session: InteractiveSession): WriteMode {
   if (session.options.apply) return 'apply';
   if (session.options.approve) return 'approve';
   return 'dry-run';
+}
+
+/**
+ * Create empty token usage
+ */
+function createEmptyTokenUsage(): TokenUsage {
+  return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+}
+
+/**
+ * Create empty session token usage
+ */
+function createEmptySessionTokenUsage(): SessionTokenUsage {
+  return {
+    claude: createEmptyTokenUsage(),
+    openai: createEmptyTokenUsage(),
+    gemini: createEmptyTokenUsage(),
+    total: createEmptyTokenUsage(),
+  };
+}
+
+/**
+ * Add token usage to session totals
+ */
+function addTokenUsage(session: InteractiveSession, provider: 'claude' | 'openai' | 'gemini', usage: TokenUsage): void {
+  session.tokenUsage[provider].inputTokens += usage.inputTokens;
+  session.tokenUsage[provider].outputTokens += usage.outputTokens;
+  session.tokenUsage[provider].totalTokens += usage.totalTokens;
+
+  session.tokenUsage.total.inputTokens += usage.inputTokens;
+  session.tokenUsage.total.outputTokens += usage.outputTokens;
+  session.tokenUsage.total.totalTokens += usage.totalTokens;
 }
 
 /**
@@ -334,6 +371,27 @@ const BUILTIN_COMMANDS: BuiltinCommand[] = [
       return true;
     },
   },
+  {
+    name: 'usage',
+    aliases: ['u'],
+    description: 'Show token usage for this session',
+    handler: async (session) => {
+      console.log(renderUsageSummary(session.tokenUsage));
+      return true;
+    },
+  },
+  {
+    name: 'verbose',
+    aliases: ['v'],
+    description: 'Toggle verbose debug logging',
+    handler: async (session) => {
+      session.options.verbose = !session.options.verbose;
+      console.log(renderSystemMessage(
+        `Verbose mode: ${session.options.verbose ? 'ON' : 'OFF'}\n`
+      ));
+      return true;
+    },
+  },
 ];
 
 function parseBuiltinCommand(input: string): { command: string; args: string } | null {
@@ -380,38 +438,41 @@ function buildContextFromHistory(session: InteractiveSession): string {
 
 /**
  * Create an activity callback for real-time display
+ * Uses single-line animated progress for cleaner UX
  */
 function createActivityCallback(): ActivityCallback {
   return (event: ActivityEvent) => {
     switch (event.type) {
       case 'context_gathering':
-        console.log(renderContextGathering());
+        renderContextGathering(); // Progress handles display
         break;
 
       case 'thinking':
-        console.log(renderActivity(event.message));
+        renderActivity(event.message); // Progress handles display
         break;
 
       case 'tool_start':
         if (event.details?.tool) {
-          console.log(renderToolStart(event.details.tool));
+          renderToolStart(event.details.tool); // Progress handles display
         }
         break;
 
       case 'tool_end':
-        // Only show end for non-advisor tools in verbose mode
-        // (advisors have their own end rendering)
+        if (event.details?.tool) {
+          const result = renderToolEnd(event.details.tool, event.details.success ?? true);
+          if (result) console.log(result); // Only print if there's an error message
+        }
         break;
 
       case 'advisor_start':
         if (event.details?.advisor) {
-          console.log(renderAdvisorStart(event.details.advisor, event.details.question));
+          renderAdvisorStart(event.details.advisor, event.details.question); // Progress handles display
         }
         break;
 
       case 'advisor_end':
         if (event.details?.advisor) {
-          console.log(renderAdvisorEnd(event.details.advisor, event.details.success ?? true));
+          renderAdvisorEnd(event.details.advisor, event.details.success ?? true); // Progress handles display
         }
         break;
     }
@@ -474,10 +535,30 @@ async function processTask(
   try {
     const result = await runOrchestrator(taskWithContext, options, onActivity);
 
+    // Stop progress indicator before displaying response
+    stopProgress();
+
+    // Track Claude token usage
+    if (result.response.usage) {
+      addTokenUsage(session, 'claude', result.response.usage);
+      // Show token usage after response
+      console.log(renderTokenUsage('Claude', result.response.usage.inputTokens, result.response.usage.outputTokens));
+    }
+
+    // Track advisor token usage from result
+    for (const advisorResponse of result.advisorResponses) {
+      if (advisorResponse.usage) {
+        const provider = advisorResponse.model.startsWith('openai') ? 'openai' :
+                        advisorResponse.model.startsWith('gemini') ? 'gemini' : null;
+        if (provider) {
+          addTokenUsage(session, provider, advisorResponse.usage);
+        }
+      }
+    }
+
     // Display Claude's response with styled header
     console.log(renderResponseStart());
     console.log(result.response.content);
-    console.log(renderResponseEnd());
     console.log('');
 
     // Add assistant response to history
@@ -535,6 +616,7 @@ export async function runInteractiveSession(options: InteractiveOptions): Promis
     },
     startedAt: new Date(),
     planOnly: false,
+    tokenUsage: createEmptySessionTokenUsage(),
   };
 
   // Determine mode for header
