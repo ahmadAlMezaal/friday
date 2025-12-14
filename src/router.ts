@@ -493,11 +493,17 @@ async function runClaudeAgent(state: GraphState): Promise<Partial<GraphState>> {
       ? `\n\nYou have access to advisor tools: ${state.options.advisors.join(', ')}. Use them when you want a second opinion.`
       : '\n\nNo advisor tools are configured. Work independently.';
 
-  const applyInfo = state.options.apply
-    ? '\n\nFile modification is ENABLED. You can write files and apply patches.'
-    : '\n\nFile modification is DISABLED (dry-run mode). You can only read and analyze.';
+  // Fix: Properly report mode to Claude - both apply AND approve enable file writes
+  let modeInfo: string;
+  if (state.options.apply) {
+    modeInfo = '\n\nFile modification is ENABLED (apply mode). Changes will be written immediately.';
+  } else if (state.options.approve) {
+    modeInfo = '\n\nFile modification is ENABLED (approve mode). User will be prompted to confirm each file change.';
+  } else {
+    modeInfo = '\n\nFile modification is DISABLED (dry-run mode). You can only read and analyze.';
+  }
 
-  taskPrompt += advisorInfo + applyInfo;
+  taskPrompt += advisorInfo + modeInfo;
 
   const response = await claude.generateResponse(taskPrompt);
 

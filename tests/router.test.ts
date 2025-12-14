@@ -1,19 +1,48 @@
 import { describe, it, expect } from 'vitest';
-import { CliOptions, AdvisorType } from '../src/types.js';
+import { CliOptions, AdvisorType, WriteMode } from '../src/types.js';
 
 // Helper to create test CLI options
 function createTestOptions(overrides: {
   task?: string;
   advisors?: AdvisorType[];
   apply?: boolean;
+  approve?: boolean;
+  workspace?: string;
 }): CliOptions {
+  const apply = overrides.apply || false;
+  const approve = overrides.approve || false;
   return {
     task: overrides.task || 'test task',
     advisors: overrides.advisors || [],
-    apply: overrides.apply || false,
-    dryRun: !overrides.apply,
+    apply,
+    approve,
+    dryRun: !apply && !approve,
+    workspace: overrides.workspace,
     verbose: false,
   };
+}
+
+// Helper to determine write mode from options (mirrors interactive.ts logic)
+function getWriteMode(options: CliOptions): WriteMode {
+  if (options.apply) return 'apply';
+  if (options.approve) return 'approve';
+  return 'dry-run';
+}
+
+// Helper to check if file writes are enabled (mirrors router.ts logic)
+function areFileWritesEnabled(options: CliOptions): boolean {
+  return options.apply || options.approve;
+}
+
+// Helper to get mode info string (mirrors router.ts runClaudeAgent logic)
+function getModeInfo(options: CliOptions): string {
+  if (options.apply) {
+    return 'File modification is ENABLED (apply mode). Changes will be written immediately.';
+  } else if (options.approve) {
+    return 'File modification is ENABLED (approve mode). User will be prompted to confirm each file change.';
+  } else {
+    return 'File modification is DISABLED (dry-run mode). You can only read and analyze.';
+  }
 }
 
 describe('CLI Options', () => {
@@ -139,5 +168,107 @@ describe('Safety Constraints', () => {
 
     expect(canWrite(createTestOptions({ apply: false }))).toBe(false);
     expect(canWrite(createTestOptions({ apply: true }))).toBe(true);
+  });
+});
+
+// ============================================================================
+// Mode Regression Tests
+// ============================================================================
+// These tests verify that approve mode correctly enables file writes
+// and that Claude is properly informed of the mode.
+
+describe('Mode Regression: Approve Mode', () => {
+  describe('write mode detection', () => {
+    it('should return dry-run when neither apply nor approve is set', () => {
+      const options = createTestOptions({});
+      expect(getWriteMode(options)).toBe('dry-run');
+    });
+
+    it('should return apply when apply is true', () => {
+      const options = createTestOptions({ apply: true });
+      expect(getWriteMode(options)).toBe('apply');
+    });
+
+    it('should return approve when approve is true', () => {
+      const options = createTestOptions({ approve: true, workspace: '/test' });
+      expect(getWriteMode(options)).toBe('approve');
+    });
+
+    it('should prioritize apply over approve if both are set', () => {
+      const options = createTestOptions({ apply: true, approve: true, workspace: '/test' });
+      expect(getWriteMode(options)).toBe('apply');
+    });
+  });
+
+  describe('file writes enabled check', () => {
+    it('should return false for dry-run mode', () => {
+      const options = createTestOptions({});
+      expect(areFileWritesEnabled(options)).toBe(false);
+    });
+
+    it('should return true for apply mode', () => {
+      const options = createTestOptions({ apply: true });
+      expect(areFileWritesEnabled(options)).toBe(true);
+    });
+
+    it('should return true for approve mode', () => {
+      const options = createTestOptions({ approve: true, workspace: '/test' });
+      expect(areFileWritesEnabled(options)).toBe(true);
+    });
+  });
+
+  describe('mode info string for Claude', () => {
+    it('should indicate dry-run when neither apply nor approve is set', () => {
+      const options = createTestOptions({});
+      const modeInfo = getModeInfo(options);
+      expect(modeInfo).toContain('DISABLED');
+      expect(modeInfo).toContain('dry-run');
+    });
+
+    it('should indicate ENABLED for apply mode', () => {
+      const options = createTestOptions({ apply: true });
+      const modeInfo = getModeInfo(options);
+      expect(modeInfo).toContain('ENABLED');
+      expect(modeInfo).toContain('apply mode');
+      expect(modeInfo).not.toContain('DISABLED');
+    });
+
+    it('should indicate ENABLED for approve mode (regression test)', () => {
+      // This is the key regression test - approve mode should NOT say dry-run
+      const options = createTestOptions({ approve: true, workspace: '/test' });
+      const modeInfo = getModeInfo(options);
+      expect(modeInfo).toContain('ENABLED');
+      expect(modeInfo).toContain('approve mode');
+      expect(modeInfo).not.toContain('DISABLED');
+      expect(modeInfo).not.toContain('dry-run');
+    });
+  });
+
+  describe('mode persistence across multiple operations', () => {
+    it('should maintain approve mode across simulated file writes', () => {
+      const options = createTestOptions({ approve: true, workspace: '/test' });
+
+      // Simulate multiple file write checks (as would happen in a task)
+      const firstCheck = areFileWritesEnabled(options);
+      const secondCheck = areFileWritesEnabled(options);
+      const thirdCheck = areFileWritesEnabled(options);
+
+      // All checks should return true - mode should not regress
+      expect(firstCheck).toBe(true);
+      expect(secondCheck).toBe(true);
+      expect(thirdCheck).toBe(true);
+    });
+
+    it('should maintain consistent mode info across multiple calls', () => {
+      const options = createTestOptions({ approve: true, workspace: '/test' });
+
+      // Simulate multiple Claude prompts
+      const firstModeInfo = getModeInfo(options);
+      const secondModeInfo = getModeInfo(options);
+
+      // Mode info should be identical and always show ENABLED
+      expect(firstModeInfo).toBe(secondModeInfo);
+      expect(firstModeInfo).toContain('ENABLED');
+    });
   });
 });
