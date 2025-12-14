@@ -1,6 +1,6 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { AdvisorResponse } from '../types.js';
+import { AdvisorResponse, TokenUsage } from '../types.js';
 
 export interface OpenAIAdvisorOptions {
   apiKey: string;
@@ -58,9 +58,23 @@ export async function askOpenAI(
         ? response.content
         : JSON.stringify(response.content);
 
+    // Extract token usage from response metadata if available
+    let usage: TokenUsage | undefined;
+    const usageMetadata = response.response_metadata?.tokenUsage || response.usage_metadata;
+    if (usageMetadata) {
+      const inputTokens = usageMetadata.promptTokens || usageMetadata.input_tokens || 0;
+      const outputTokens = usageMetadata.completionTokens || usageMetadata.output_tokens || 0;
+      usage = {
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+      };
+    }
+
     return {
       response: content,
       model: `openai:${modelName}`,
+      usage,
     };
   } catch (error) {
     return {

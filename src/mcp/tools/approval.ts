@@ -3,10 +3,11 @@
  *
  * Provides consistent approval flow for file writes with:
  * - Keyboard-driven selector (arrow keys, Enter, Esc)
- * - Clear diff display
+ * - Clear diff display with plain-English summary
  * - Visual formatting
  */
 
+import * as readline from 'readline';
 import { createTwoFilesPatch } from 'diff';
 import chalk from 'chalk';
 import { ApprovalChoice } from '../../types.js';
@@ -21,6 +22,7 @@ const symbols = {
   skip: '⏭️',
   abort: '🛑',
   pointer: '❯',
+  info: 'ℹ️',
 };
 
 const colors = {
@@ -45,9 +47,13 @@ const APPROVAL_OPTIONS: { label: string; value: ApprovalChoice }[] = [
   { label: 'Reject', value: 'no' },
 ];
 
+// Total lines used by the selector UI
+const SELECTOR_LINES = APPROVAL_OPTIONS.length + 4; // question + blank + options + blank + hint
+
 /**
  * Keyboard-driven approval selector
  * Uses arrow keys to navigate, Enter to select, Esc to abort
+ * Properly redraws in place without duplication
  */
 export async function promptForApproval(message: string): Promise<ApprovalChoice> {
   // Fall back to simple prompt if not a TTY
@@ -58,89 +64,147 @@ export async function promptForApproval(message: string): Promise<ApprovalChoice
   return new Promise((resolve) => {
     let selectedIndex = 0;
     const stdin = process.stdin;
+    let keyBuffer = '';
+    let resolved = false;
+
+    // Save cursor position and render initial state
+    const renderInitial = () => {
+      // Print the menu structure
+      process.stdout.write('\n'); // question line
+      process.stdout.write('\n'); // blank
+      for (let i = 0; i < APPROVAL_OPTIONS.length; i++) {
+        process.stdout.write('\n'); // option lines
+      }
+      process.stdout.write('\n'); // blank
+      process.stdout.write('\n'); // hint line
+    };
+
+    // Render the selector by moving cursor and rewriting
+    const render = () => {
+      // Move cursor up to the start of our menu
+      process.stdout.write(`\x1b[${SELECTOR_LINES}A`);
+      // Clear from cursor to end of screen
+      process.stdout.write('\x1b[J');
+
+      // Question
+      process.stdout.write(colors.primary(message) + '\n');
+      process.stdout.write('\n');
+
+      // Options
+      for (let i = 0; i < APPROVAL_OPTIONS.length; i++) {
+        const option = APPROVAL_OPTIONS[i];
+        if (i === selectedIndex) {
+          process.stdout.write(colors.selected(`  ${symbols.pointer} ${option.label}`) + '\n');
+        } else {
+          process.stdout.write(colors.unselected(`    ${option.label}`) + '\n');
+        }
+      }
+
+      // Hint
+      process.stdout.write('\n');
+      process.stdout.write(colors.dim('(↑↓ navigate · Enter select · Esc abort)') + '\n');
+    };
+
+    const cleanup = () => {
+      if (resolved) return;
+      resolved = true;
+
+      // Restore terminal state
+      stdin.setRawMode(false);
+      stdin.removeListener('data', onData);
+      stdin.pause();
+
+      // Clear the selector UI - move up and clear
+      process.stdout.write(`\x1b[${SELECTOR_LINES}A`);
+      process.stdout.write('\x1b[J');
+    };
+
+    // Handle keypress with proper escape sequence buffering
+    const onData = (data: string) => {
+      if (resolved) return;
+
+      keyBuffer += data;
+
+      // Process complete sequences
+      while (keyBuffer.length > 0) {
+        // Check for escape sequences (arrow keys)
+        if (keyBuffer.startsWith('\x1b[A')) {
+          // Arrow up
+          selectedIndex = Math.max(0, selectedIndex - 1);
+          render();
+          keyBuffer = keyBuffer.slice(3);
+          continue;
+        }
+        if (keyBuffer.startsWith('\x1b[B')) {
+          // Arrow down
+          selectedIndex = Math.min(APPROVAL_OPTIONS.length - 1, selectedIndex + 1);
+          render();
+          keyBuffer = keyBuffer.slice(3);
+          continue;
+        }
+        if (keyBuffer.startsWith('\x1b[C') || keyBuffer.startsWith('\x1b[D')) {
+          // Arrow left/right - ignore
+          keyBuffer = keyBuffer.slice(3);
+          continue;
+        }
+
+        // Check for bare Escape (need to wait to see if more chars follow)
+        if (keyBuffer === '\x1b') {
+          // Wait a bit to see if more chars are coming (escape sequence)
+          setTimeout(() => {
+            if (keyBuffer === '\x1b' && !resolved) {
+              // It's a bare Escape key
+              cleanup();
+              resolve('abort');
+            }
+          }, 50);
+          return;
+        }
+
+        // Skip incomplete escape sequences
+        if (keyBuffer.startsWith('\x1b') && keyBuffer.length < 3) {
+          return; // Wait for more data
+        }
+
+        // Handle other keys
+        const char = keyBuffer[0];
+        keyBuffer = keyBuffer.slice(1);
+
+        // Enter key
+        if (char === '\r' || char === '\n') {
+          cleanup();
+          resolve(APPROVAL_OPTIONS[selectedIndex].value);
+          return;
+        }
+
+        // Vim-style navigation
+        if (char === 'k' || char === 'K') {
+          selectedIndex = Math.max(0, selectedIndex - 1);
+          render();
+          continue;
+        }
+        if (char === 'j' || char === 'J') {
+          selectedIndex = Math.min(APPROVAL_OPTIONS.length - 1, selectedIndex + 1);
+          render();
+          continue;
+        }
+
+        // Ctrl+C
+        if (char === '\x03') {
+          cleanup();
+          process.exit(0);
+        }
+      }
+    };
 
     // Enable raw mode to capture individual keypresses
     stdin.setRawMode(true);
     stdin.resume();
     stdin.setEncoding('utf8');
 
-    // Render the selector
-    const render = () => {
-      // Clear previous render (move up and clear lines)
-      const totalLines = APPROVAL_OPTIONS.length + 2; // options + hint line + question
-      process.stdout.write(`\x1b[${totalLines}A\x1b[J`);
-
-      // Question
-      console.log(colors.primary(message));
-      console.log('');
-
-      // Options
-      APPROVAL_OPTIONS.forEach((option, index) => {
-        if (index === selectedIndex) {
-          console.log(colors.selected(`  ${symbols.pointer} ${option.label}`));
-        } else {
-          console.log(colors.unselected(`    ${option.label}`));
-        }
-      });
-
-      // Hint
-      console.log('');
-      console.log(colors.dim('(↑↓ navigate · Enter select · Esc abort)'));
-    };
-
-    // Initial render - need to print blank lines first
-    console.log('');
-    console.log('');
-    APPROVAL_OPTIONS.forEach(() => console.log(''));
-    console.log('');
-    console.log('');
+    // Initial render
+    renderInitial();
     render();
-
-    // Handle keypress
-    const onData = (key: string) => {
-      // Escape key
-      if (key === '\x1b' || key === '\x1b\x1b') {
-        cleanup();
-        resolve('abort');
-        return;
-      }
-
-      // Enter key
-      if (key === '\r' || key === '\n') {
-        cleanup();
-        resolve(APPROVAL_OPTIONS[selectedIndex].value);
-        return;
-      }
-
-      // Arrow up
-      if (key === '\x1b[A' || key === 'k') {
-        selectedIndex = Math.max(0, selectedIndex - 1);
-        render();
-        return;
-      }
-
-      // Arrow down
-      if (key === '\x1b[B' || key === 'j') {
-        selectedIndex = Math.min(APPROVAL_OPTIONS.length - 1, selectedIndex + 1);
-        render();
-        return;
-      }
-
-      // Ctrl+C
-      if (key === '\x03') {
-        cleanup();
-        process.exit(0);
-      }
-    };
-
-    const cleanup = () => {
-      stdin.setRawMode(false);
-      stdin.removeListener('data', onData);
-      stdin.pause();
-      // Clear the selector UI
-      const totalLines = APPROVAL_OPTIONS.length + 3;
-      process.stdout.write(`\x1b[${totalLines}A\x1b[J`);
-    };
 
     stdin.on('data', onData);
   });
@@ -150,8 +214,7 @@ export async function promptForApproval(message: string): Promise<ApprovalChoice
  * Simple fallback prompt for non-TTY environments
  */
 async function promptForApprovalSimple(message: string): Promise<ApprovalChoice> {
-  const { createInterface } = await import('readline');
-  const rl = createInterface({
+  const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
@@ -168,7 +231,115 @@ async function promptForApprovalSimple(message: string): Promise<ApprovalChoice>
 }
 
 /**
- * Display a file write proposal with diff
+ * Generate a plain-English summary of changes from a diff
+ * This is deterministic - no LLM call required
+ */
+function generateDiffSummary(
+  path: string,
+  existingContent: string,
+  newContent: string,
+  isNewFile: boolean
+): string[] {
+  const summary: string[] = [];
+  const newLines = newContent.split('\n').length;
+
+  if (isNewFile) {
+    summary.push(`Create new file ${path} (${newLines} lines)`);
+    // Detect file type and add context
+    if (path.endsWith('.css') || path.endsWith('.scss')) {
+      const classCount = (newContent.match(/\.[a-zA-Z][\w-]*/g) || []).length;
+      if (classCount > 0) summary.push(`  • ${classCount} CSS classes defined`);
+    } else if (path.endsWith('.ts') || path.endsWith('.js') || path.endsWith('.tsx') || path.endsWith('.jsx')) {
+      const funcCount = (newContent.match(/(?:function\s+\w+|const\s+\w+\s*=\s*(?:async\s*)?\(|=>\s*{)/g) || []).length;
+      const classCount = (newContent.match(/class\s+\w+/g) || []).length;
+      if (funcCount > 0) summary.push(`  • ${funcCount} functions`);
+      if (classCount > 0) summary.push(`  • ${classCount} classes`);
+    } else if (path.endsWith('.html')) {
+      summary.push(`  • HTML document`);
+    }
+    return summary;
+  }
+
+  // For modifications, analyze the diff
+  const oldLines = existingContent.split('\n');
+  const newLinesArr = newContent.split('\n');
+
+  let addedCount = 0;
+  let removedCount = 0;
+
+  // Simple line-based diff analysis
+  const oldSet = new Set(oldLines.map(l => l.trim()));
+  const newSet = new Set(newLinesArr.map(l => l.trim()));
+
+  for (const line of newLinesArr) {
+    if (line.trim() && !oldSet.has(line.trim())) addedCount++;
+  }
+  for (const line of oldLines) {
+    if (line.trim() && !newSet.has(line.trim())) removedCount++;
+  }
+
+  summary.push(`Modify ${path}: +${addedCount} / -${removedCount} lines`);
+
+  // Detect patterns in changes
+  const changes: string[] = [];
+
+  // CSS patterns
+  if (path.endsWith('.css') || path.endsWith('.scss')) {
+    const removedGradients = existingContent.includes('gradient') && !newContent.includes('gradient');
+    const removedAnimations = existingContent.includes('animation') && !newContent.includes('animation');
+    if (removedGradients) changes.push('remove gradients');
+    if (removedAnimations) changes.push('remove animations');
+
+    const addedFlexbox = !existingContent.includes('display: flex') && newContent.includes('display: flex');
+    const addedGrid = !existingContent.includes('display: grid') && newContent.includes('display: grid');
+    if (addedFlexbox) changes.push('add flexbox layout');
+    if (addedGrid) changes.push('add grid layout');
+  }
+
+  // JS/TS patterns
+  if (path.endsWith('.ts') || path.endsWith('.js') || path.endsWith('.tsx') || path.endsWith('.jsx')) {
+    const removedClasses = (existingContent.match(/class\s+\w+/g) || []).length - (newContent.match(/class\s+\w+/g) || []).length;
+    if (removedClasses > 0) changes.push('simplify class structure');
+
+    const addedAsync = !existingContent.includes('async') && newContent.includes('async');
+    if (addedAsync) changes.push('add async handling');
+
+    const addedFetch = !existingContent.includes('fetch(') && newContent.includes('fetch(');
+    if (addedFetch) changes.push('add API calls');
+
+    const removedLocalStorage = existingContent.includes('localStorage') && !newContent.includes('localStorage');
+    if (removedLocalStorage) changes.push('remove localStorage');
+  }
+
+  if (changes.length > 0) {
+    summary.push(`  • ${changes.slice(0, 3).join(', ')}`);
+  }
+
+  return summary;
+}
+
+/**
+ * Generate a plain-English summary from a unified diff string
+ */
+function generatePatchSummary(path: string, unifiedDiff: string): string[] {
+  const summary: string[] = [];
+
+  const lines = unifiedDiff.split('\n');
+  let addedCount = 0;
+  let removedCount = 0;
+
+  for (const line of lines) {
+    if (line.startsWith('+') && !line.startsWith('+++')) addedCount++;
+    if (line.startsWith('-') && !line.startsWith('---')) removedCount++;
+  }
+
+  summary.push(`Patch ${path}: +${addedCount} / -${removedCount} lines`);
+
+  return summary;
+}
+
+/**
+ * Display a file write proposal with diff and plain-English summary
  */
 export function displayWriteProposal(
   path: string,
@@ -183,6 +354,15 @@ export function displayWriteProposal(
   console.log('\n' + colors.dim(divider));
   console.log(`${symbols.write} ${actionColor(action)} ${colors.file(path)}`);
   console.log(colors.dim(divider));
+
+  // Plain-English summary before the diff
+  const summary = generateDiffSummary(path, existingContent, newContent, isNewFile);
+  console.log('');
+  console.log(colors.primary.bold('Summary:'));
+  for (const line of summary) {
+    console.log(chalk.white(`  ${line}`));
+  }
+  console.log('');
 
   const patch = createTwoFilesPatch(
     path,
@@ -200,7 +380,7 @@ export function displayWriteProposal(
 }
 
 /**
- * Display a patch proposal
+ * Display a patch proposal with plain-English summary
  */
 export function displayPatchProposal(path: string, unifiedDiff: string): void {
   const divider = symbols.divider.repeat(60);
@@ -208,6 +388,15 @@ export function displayPatchProposal(path: string, unifiedDiff: string): void {
   console.log('\n' + colors.dim(divider));
   console.log(`${symbols.patch} ${colors.action.modify('PATCH')} ${colors.file(path)}`);
   console.log(colors.dim(divider));
+
+  // Plain-English summary before the diff
+  const summary = generatePatchSummary(path, unifiedDiff);
+  console.log('');
+  console.log(colors.primary.bold('Summary:'));
+  for (const line of summary) {
+    console.log(chalk.white(`  ${line}`));
+  }
+  console.log('');
 
   const colorizedDiff = colorizeDiff(unifiedDiff);
   console.log(colorizedDiff);

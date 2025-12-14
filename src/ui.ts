@@ -44,6 +44,8 @@ export const emojis = {
   skipped: '⏭️',
   aborted: '🛑',
   error: '❌',
+  info: 'ℹ️',
+  tokens: '📊',
 };
 
 // Unicode characters for visual elements
@@ -431,6 +433,12 @@ export function renderHelp(): string {
   lines.push(
     `  ${colors.text('!clear, !c')}           ${colors.textDim('Clear conversation history')}`
   );
+  lines.push(
+    `  ${colors.text('!usage, !u')}           ${colors.textDim('Show token usage for session')}`
+  );
+  lines.push(
+    `  ${colors.text('!verbose, !v')}         ${colors.textDim('Toggle verbose debug logging')}`
+  );
   lines.push('');
 
   lines.push(`${colors.primary('Session Control:')}`);
@@ -569,7 +577,7 @@ export function renderToolStart(toolName: string): string {
 /**
  * Render tool activity end - completes progress
  */
-export function renderToolEnd(toolName: string, success: boolean): string {
+export function renderToolEnd(toolName: string, success: boolean, message?: string): string {
   progress.stop();
   // Don't output anything on success for cleaner UX
   // Only output on failure
@@ -577,6 +585,13 @@ export function renderToolEnd(toolName: string, success: boolean): string {
     return colors.warning(`${emojis.error} Failed: ${toolName.replace(/_/g, ' ')}`);
   }
   return '';
+}
+
+/**
+ * Render file not found (informational, not error)
+ */
+export function renderFileNotFound(path: string): string {
+  return colors.info(`${emojis.info} Not found (new file): ${path}`);
 }
 
 /**
@@ -700,4 +715,83 @@ export function renderWriteModeHint(mode: 'apply' | 'approve'): string {
     return colors.warning(`   ${symbols.bullet} Mode: --apply (changes will be written immediately)\n`);
   }
   return colors.secondary(`   ${symbols.bullet} Mode: --approve (you will be prompted for each file)\n`);
+}
+
+// ============================================================================
+// Token Usage Rendering
+// ============================================================================
+
+/**
+ * Format a number with commas for readability
+ */
+function formatNumber(n: number): string {
+  return n.toLocaleString();
+}
+
+/**
+ * Render token usage for a single model call
+ */
+export function renderTokenUsage(
+  provider: string,
+  inputTokens: number,
+  outputTokens: number
+): string {
+  const total = inputTokens + outputTokens;
+  return colors.textDim(
+    `${emojis.tokens} ${provider}: ${formatNumber(inputTokens)} in / ${formatNumber(outputTokens)} out (${formatNumber(total)} total)`
+  );
+}
+
+/**
+ * Render session token usage summary for !usage command
+ */
+export function renderUsageSummary(usage: {
+  claude: { inputTokens: number; outputTokens: number; totalTokens: number };
+  openai: { inputTokens: number; outputTokens: number; totalTokens: number };
+  gemini: { inputTokens: number; outputTokens: number; totalTokens: number };
+  total: { inputTokens: number; outputTokens: number; totalTokens: number };
+}): string {
+  const lines: string[] = [];
+
+  lines.push('');
+  lines.push(colors.primary('Session Token Usage:'));
+  lines.push(colors.textDim('─'.repeat(50)));
+
+  // Claude usage
+  if (usage.claude.totalTokens > 0) {
+    lines.push(
+      `  ${colors.label('Claude')}    ${formatNumber(usage.claude.inputTokens).padStart(10)} in  │  ${formatNumber(usage.claude.outputTokens).padStart(10)} out  │  ${formatNumber(usage.claude.totalTokens).padStart(10)} total`
+    );
+  } else {
+    lines.push(`  ${colors.label('Claude')}    ${colors.textDim('(no usage)')}`);
+  }
+
+  // OpenAI usage
+  if (usage.openai.totalTokens > 0) {
+    lines.push(
+      `  ${colors.label('OpenAI')}    ${formatNumber(usage.openai.inputTokens).padStart(10)} in  │  ${formatNumber(usage.openai.outputTokens).padStart(10)} out  │  ${formatNumber(usage.openai.totalTokens).padStart(10)} total`
+    );
+  } else {
+    lines.push(`  ${colors.label('OpenAI')}    ${colors.textDim('(no usage)')}`);
+  }
+
+  // Gemini usage
+  if (usage.gemini.totalTokens > 0) {
+    lines.push(
+      `  ${colors.label('Gemini')}    ${formatNumber(usage.gemini.inputTokens).padStart(10)} in  │  ${formatNumber(usage.gemini.outputTokens).padStart(10)} out  │  ${formatNumber(usage.gemini.totalTokens).padStart(10)} total`
+    );
+  } else {
+    lines.push(`  ${colors.label('Gemini')}    ${colors.textDim('(no usage)')}`);
+  }
+
+  // Total
+  lines.push(colors.textDim('─'.repeat(50)));
+  lines.push(
+    colors.success(
+      `  ${colors.label('Total')}     ${formatNumber(usage.total.inputTokens).padStart(10)} in  │  ${formatNumber(usage.total.outputTokens).padStart(10)} out  │  ${formatNumber(usage.total.totalTokens).padStart(10)} total`
+    )
+  );
+  lines.push('');
+
+  return lines.join('\n');
 }

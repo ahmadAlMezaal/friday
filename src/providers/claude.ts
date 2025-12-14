@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { LLMProvider, LLMResponse, AgentTool, ToolResult } from '../types.js';
+import { LLMProvider, LLMResponse, AgentTool, ToolResult, TokenUsage } from '../types.js';
 
 export interface ClaudeAgentOptions {
   apiKey: string;
@@ -61,6 +61,10 @@ export class ClaudeProvider implements LLMProvider {
       messages,
     });
 
+    // Track cumulative token usage across all API calls
+    let totalInputTokens = response.usage?.input_tokens || 0;
+    let totalOutputTokens = response.usage?.output_tokens || 0;
+
     // Agentic loop: handle tool calls with budget guards
     let turnCount = 0;
     let toolCallCount = 0;
@@ -79,6 +83,11 @@ export class ClaudeProvider implements LLMProvider {
           content: partialContent + warning,
           model: `claude:${this.model}`,
           confidence: 0.5,
+          usage: {
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            totalTokens: totalInputTokens + totalOutputTokens,
+          },
         };
       }
 
@@ -97,6 +106,11 @@ export class ClaudeProvider implements LLMProvider {
           content: partialContent + warning,
           model: `claude:${this.model}`,
           confidence: 0.5,
+          usage: {
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            totalTokens: totalInputTokens + totalOutputTokens,
+          },
         };
       }
 
@@ -139,6 +153,10 @@ export class ClaudeProvider implements LLMProvider {
         tools: anthropicTools.length > 0 ? anthropicTools : undefined,
         messages,
       });
+
+      // Accumulate token usage
+      totalInputTokens += response.usage?.input_tokens || 0;
+      totalOutputTokens += response.usage?.output_tokens || 0;
     }
 
     // Extract final text response
@@ -147,20 +165,31 @@ export class ClaudeProvider implements LLMProvider {
     );
     const content = textBlocks.map((b) => b.text).join('\n');
 
+    const usage: TokenUsage = {
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      totalTokens: totalInputTokens + totalOutputTokens,
+    };
+
     return {
       content,
       model: `claude:${this.model}`,
       confidence: 0.95,
+      usage,
     };
   }
 
   private buildSystemPrompt(): string {
+    // Check if write tools are available
+    const hasWriteTools = this.tools.some(t => t.name === 'write_file' || t.name === 'apply_patch');
+
     return `You are the primary engineering agent in a development assistant tool called Friday.
 
 ## Your Role
 - You are the single reasoning brain responsible for analyzing tasks and producing solutions
 - You have access to repository tools (search, read files, git diff) and advisor tools (ask other LLMs)
 - You make all final decisions about what to recommend or implement
+${hasWriteTools ? '- You have write_file and apply_patch tools available - USE THEM when the task requires creating or modifying files' : ''}
 
 ## Execution Workflow - IMPORTANT
 
@@ -189,9 +218,11 @@ I am ready to write the following files:
 3. tests/validator.test.ts (create) - Unit tests for validator
 \`\`\`
 
-### Phase 3: Writing
-After stating your proposal, proceed to call write_file or apply_patch for each file.
-The user will be prompted to approve each change (if --approve mode) or changes will apply immediately (if --apply mode).
+### Phase 3: Writing - CRITICAL
+${hasWriteTools ? `After stating your proposal, you MUST call write_file or apply_patch for EACH file.
+DO NOT just describe what you would create - actually call the write_file tool.
+The task is NOT complete until you have called write_file for every file that needs to be created.
+If read_file returns "FILE DOES NOT EXIST", you must create it using write_file.` : 'File modification is disabled. Describe the changes without calling write tools.'}
 
 ## Advisor Models
 You may consult other AI models (OpenAI GPT, Google Gemini) for second opinions when:
@@ -212,7 +243,7 @@ When consulting advisors:
 - Explain your reasoning
 - If you consulted advisors, summarize what you learned from them
 - Always produce a single, coherent final answer
-- Be confident - when you've planned your changes, proceed to write them
+${hasWriteTools ? '- When the task requires creating files, you MUST call write_file - do not just describe what files would be created' : ''}
 
 ## Safety
 - Only propose file changes when explicitly asked to implement something

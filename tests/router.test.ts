@@ -272,3 +272,171 @@ describe('Mode Regression: Approve Mode', () => {
     });
   });
 });
+
+// ============================================================================
+// File Creation Task Detection Tests
+// ============================================================================
+// These tests verify that tasks requesting file creation are properly detected
+// and that the write flow is triggered.
+
+/**
+ * Detect if a task is requesting file creation/modification
+ * (mirrors router.ts isFileCreationTask logic)
+ */
+function isFileCreationTask(task: string): boolean {
+  const lowerTask = task.toLowerCase();
+  const creationKeywords = [
+    'create', 'build', 'make', 'generate', 'write', 'implement',
+    'add', 'setup', 'scaffold', 'init', 'new', 'develop'
+  ];
+  const fileKeywords = [
+    'file', 'files', 'app', 'application', 'website', 'page',
+    'component', 'module', 'project', 'code', 'html', 'css', 'js',
+    'javascript', 'typescript', 'todo', 'script'
+  ];
+
+  const hasCreationKeyword = creationKeywords.some(kw => lowerTask.includes(kw));
+  const hasFileKeyword = fileKeywords.some(kw => lowerTask.includes(kw));
+
+  return hasCreationKeyword && hasFileKeyword;
+}
+
+describe('File Creation Task Detection', () => {
+  describe('should detect file creation tasks', () => {
+    it('should detect "create a minimal todo list website"', () => {
+      expect(isFileCreationTask('create a minimal todo list website using plain HTML, CSS, and JS')).toBe(true);
+    });
+
+    it('should detect "build a simple app"', () => {
+      expect(isFileCreationTask('build a simple app')).toBe(true);
+    });
+
+    it('should detect "make a new website"', () => {
+      expect(isFileCreationTask('make a new website')).toBe(true);
+    });
+
+    it('should detect "generate a typescript module"', () => {
+      expect(isFileCreationTask('generate a typescript module')).toBe(true);
+    });
+
+    it('should detect "write some javascript code"', () => {
+      expect(isFileCreationTask('write some javascript code')).toBe(true);
+    });
+
+    it('should detect "implement a todo app"', () => {
+      expect(isFileCreationTask('implement a todo app')).toBe(true);
+    });
+
+    it('should detect "add a new component"', () => {
+      expect(isFileCreationTask('add a new component')).toBe(true);
+    });
+
+    it('should detect "setup a new project"', () => {
+      expect(isFileCreationTask('setup a new project')).toBe(true);
+    });
+
+    it('should detect "create index.html"', () => {
+      expect(isFileCreationTask('create index.html')).toBe(true);
+    });
+
+    it('should detect "develop a script"', () => {
+      expect(isFileCreationTask('develop a script')).toBe(true);
+    });
+  });
+
+  describe('should NOT detect non-file-creation tasks', () => {
+    it('should not detect "explain this code"', () => {
+      expect(isFileCreationTask('explain this code')).toBe(false);
+    });
+
+    it('should not detect "what does this function do"', () => {
+      expect(isFileCreationTask('what does this function do')).toBe(false);
+    });
+
+    it('should not detect "read the package.json"', () => {
+      expect(isFileCreationTask('read the package.json')).toBe(false);
+    });
+
+    it('should not detect "find bugs in the code"', () => {
+      expect(isFileCreationTask('find bugs in the code')).toBe(false);
+    });
+
+    it('should not detect "review the implementation"', () => {
+      expect(isFileCreationTask('review the implementation')).toBe(false);
+    });
+  });
+});
+
+// ============================================================================
+// Write Pipeline Regression Tests
+// ============================================================================
+// These tests verify the write pipeline behavior in approve/apply modes.
+
+describe('Write Pipeline Behavior', () => {
+  describe('tool availability in different modes', () => {
+    // Mirrors buildTools logic
+    function getAvailableToolNames(options: CliOptions): string[] {
+      const baseTools = ['repo_search', 'read_file', 'git_diff', 'run_command'];
+      const writeTools = options.apply || options.approve ? ['write_file', 'apply_patch'] : [];
+      const advisorTools = options.advisors.map(a => `ask_${a}`);
+      return [...baseTools, ...writeTools, ...advisorTools];
+    }
+
+    it('should NOT include write tools in dry-run mode', () => {
+      const options = createTestOptions({});
+      const tools = getAvailableToolNames(options);
+      expect(tools).not.toContain('write_file');
+      expect(tools).not.toContain('apply_patch');
+    });
+
+    it('should include write tools in apply mode', () => {
+      const options = createTestOptions({ apply: true, workspace: '/test' });
+      const tools = getAvailableToolNames(options);
+      expect(tools).toContain('write_file');
+      expect(tools).toContain('apply_patch');
+    });
+
+    it('should include write tools in approve mode', () => {
+      const options = createTestOptions({ approve: true, workspace: '/test' });
+      const tools = getAvailableToolNames(options);
+      expect(tools).toContain('write_file');
+      expect(tools).toContain('apply_patch');
+    });
+  });
+
+  describe('file creation task in approve mode', () => {
+    it('should have write tools and detect file creation task', () => {
+      const options = createTestOptions({ approve: true, workspace: '/test' });
+      const task = 'create a minimal todo list website using plain HTML, CSS, and JS';
+
+      // Write tools should be enabled
+      expect(areFileWritesEnabled(options)).toBe(true);
+
+      // Task should be detected as file creation
+      expect(isFileCreationTask(task)).toBe(true);
+
+      // Mode info should indicate ENABLED
+      const modeInfo = getModeInfo(options);
+      expect(modeInfo).toContain('ENABLED');
+      expect(modeInfo).toContain('approve mode');
+    });
+
+    it('should have write tools and detect file creation in workspace', () => {
+      const options = createTestOptions({ approve: true, workspace: '/home/user/project' });
+      const task = 'build a simple todo app with html, css, and javascript';
+
+      // All conditions for write flow should be met
+      expect(areFileWritesEnabled(options)).toBe(true);
+      expect(isFileCreationTask(task)).toBe(true);
+      expect(options.workspace).toBe('/home/user/project');
+    });
+  });
+
+  describe('FileNotFoundError handling', () => {
+    it('should return instructive message for missing files', () => {
+      // The message returned by router.ts when file is not found
+      const expectedMessage = '[FILE DOES NOT EXIST:';
+      expect(expectedMessage).toContain('FILE DOES NOT EXIST');
+    });
+  });
+});

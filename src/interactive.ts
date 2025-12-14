@@ -21,6 +21,8 @@ import {
   InteractiveOptions,
   CliOptions,
   WriteMode,
+  SessionTokenUsage,
+  TokenUsage,
 } from './types.js';
 import { runOrchestrator } from './router.js';
 import { gitDiff, runCommand } from './mcp/tools/index.js';
@@ -55,6 +57,8 @@ import {
   renderPlanModeDisabled,
   renderPlanConfirmation,
   stopProgress,
+  renderTokenUsage,
+  renderUsageSummary,
 } from './ui.js';
 import { ActivityEvent, ActivityCallback } from './types.js';
 
@@ -73,6 +77,38 @@ function getWriteMode(session: InteractiveSession): WriteMode {
   if (session.options.apply) return 'apply';
   if (session.options.approve) return 'approve';
   return 'dry-run';
+}
+
+/**
+ * Create empty token usage
+ */
+function createEmptyTokenUsage(): TokenUsage {
+  return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+}
+
+/**
+ * Create empty session token usage
+ */
+function createEmptySessionTokenUsage(): SessionTokenUsage {
+  return {
+    claude: createEmptyTokenUsage(),
+    openai: createEmptyTokenUsage(),
+    gemini: createEmptyTokenUsage(),
+    total: createEmptyTokenUsage(),
+  };
+}
+
+/**
+ * Add token usage to session totals
+ */
+function addTokenUsage(session: InteractiveSession, provider: 'claude' | 'openai' | 'gemini', usage: TokenUsage): void {
+  session.tokenUsage[provider].inputTokens += usage.inputTokens;
+  session.tokenUsage[provider].outputTokens += usage.outputTokens;
+  session.tokenUsage[provider].totalTokens += usage.totalTokens;
+
+  session.tokenUsage.total.inputTokens += usage.inputTokens;
+  session.tokenUsage.total.outputTokens += usage.outputTokens;
+  session.tokenUsage.total.totalTokens += usage.totalTokens;
 }
 
 /**
@@ -335,6 +371,27 @@ const BUILTIN_COMMANDS: BuiltinCommand[] = [
       return true;
     },
   },
+  {
+    name: 'usage',
+    aliases: ['u'],
+    description: 'Show token usage for this session',
+    handler: async (session) => {
+      console.log(renderUsageSummary(session.tokenUsage));
+      return true;
+    },
+  },
+  {
+    name: 'verbose',
+    aliases: ['v'],
+    description: 'Toggle verbose debug logging',
+    handler: async (session) => {
+      session.options.verbose = !session.options.verbose;
+      console.log(renderSystemMessage(
+        `Verbose mode: ${session.options.verbose ? 'ON' : 'OFF'}\n`
+      ));
+      return true;
+    },
+  },
 ];
 
 function parseBuiltinCommand(input: string): { command: string; args: string } | null {
@@ -481,6 +538,24 @@ async function processTask(
     // Stop progress indicator before displaying response
     stopProgress();
 
+    // Track Claude token usage
+    if (result.response.usage) {
+      addTokenUsage(session, 'claude', result.response.usage);
+      // Show token usage after response
+      console.log(renderTokenUsage('Claude', result.response.usage.inputTokens, result.response.usage.outputTokens));
+    }
+
+    // Track advisor token usage from result
+    for (const advisorResponse of result.advisorResponses) {
+      if (advisorResponse.usage) {
+        const provider = advisorResponse.model.startsWith('openai') ? 'openai' :
+                        advisorResponse.model.startsWith('gemini') ? 'gemini' : null;
+        if (provider) {
+          addTokenUsage(session, provider, advisorResponse.usage);
+        }
+      }
+    }
+
     // Display Claude's response with styled header
     console.log(renderResponseStart());
     console.log(result.response.content);
@@ -541,6 +616,7 @@ export async function runInteractiveSession(options: InteractiveOptions): Promis
     },
     startedAt: new Date(),
     planOnly: false,
+    tokenUsage: createEmptySessionTokenUsage(),
   };
 
   // Determine mode for header

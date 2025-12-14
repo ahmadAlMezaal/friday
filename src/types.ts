@@ -16,12 +16,20 @@ export const CliOptionsSchema = z.object({
 
 export type CliOptions = z.infer<typeof CliOptionsSchema>;
 
+// Token usage tracking
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
 // LLM Response types
 export interface LLMResponse {
   content: string;
   model: string;
   confidence?: number;
   uncertaintyIndicators?: string[];
+  usage?: TokenUsage;
 }
 
 // Advisor response (from secondary LLMs)
@@ -29,6 +37,7 @@ export interface AdvisorResponse {
   response: string;
   model: string;
   error?: string;
+  usage?: TokenUsage;
 }
 
 // Tool definitions for Claude agent
@@ -147,6 +156,14 @@ export interface SessionMessage {
 // Write mode for interactive sessions
 export type WriteMode = 'dry-run' | 'approve' | 'apply';
 
+// Session token usage tracking
+export interface SessionTokenUsage {
+  claude: TokenUsage;
+  openai: TokenUsage;
+  gemini: TokenUsage;
+  total: TokenUsage;
+}
+
 export interface InteractiveSession {
   messages: SessionMessage[];
   workspace: string | undefined;
@@ -155,6 +172,7 @@ export interface InteractiveSession {
   options: Omit<CliOptions, 'task'>; // task is per-message in interactive mode
   startedAt: Date;
   planOnly: boolean; // When true, next task will be plan-only
+  tokenUsage: SessionTokenUsage; // Token usage tracking
 }
 
 // Interactive mode CLI options (no task required upfront)
