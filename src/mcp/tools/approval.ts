@@ -10,6 +10,7 @@
 import * as readline from 'readline';
 import { createTwoFilesPatch } from 'diff';
 import chalk from 'chalk';
+import select from '@inquirer/select';
 import { ApprovalChoice } from '../../types.js';
 
 // Visual elements - standardized emojis
@@ -40,20 +41,10 @@ const colors = {
   unselected: chalk.gray,
 };
 
-// Options for the approval selector
-const APPROVAL_OPTIONS: { label: string; value: ApprovalChoice }[] = [
-  { label: 'Apply', value: 'yes' },
-  { label: 'Skip', value: 'skip' },
-  { label: 'Reject', value: 'no' },
-];
-
-// Total lines used by the selector UI
-const SELECTOR_LINES = APPROVAL_OPTIONS.length + 4; // question + blank + options + blank + hint
-
 /**
- * Keyboard-driven approval selector
+ * Keyboard-driven approval selector using @inquirer/select
  * Uses arrow keys to navigate, Enter to select, Esc to abort
- * Properly redraws in place without duplication
+ * Renders cleanly in place without duplication
  */
 export async function promptForApproval(message: string): Promise<ApprovalChoice> {
   // Fall back to simple prompt if not a TTY
@@ -61,153 +52,32 @@ export async function promptForApproval(message: string): Promise<ApprovalChoice
     return promptForApprovalSimple(message);
   }
 
-  return new Promise((resolve) => {
-    let selectedIndex = 0;
-    const stdin = process.stdin;
-    let keyBuffer = '';
-    let resolved = false;
+  try {
+    const answer = await select<ApprovalChoice>({
+      message: colors.primary(message),
+      choices: [
+        { name: 'Apply', value: 'yes' as ApprovalChoice },
+        { name: 'Skip', value: 'skip' as ApprovalChoice },
+        { name: 'Reject', value: 'no' as ApprovalChoice },
+      ],
+      theme: {
+        prefix: '',
+        style: {
+          highlight: (text: string) => colors.selected(text),
+          message: (text: string) => text, // Already styled
+        },
+      },
+    });
 
-    // Save cursor position and render initial state
-    const renderInitial = () => {
-      // Print the menu structure
-      process.stdout.write('\n'); // question line
-      process.stdout.write('\n'); // blank
-      for (let i = 0; i < APPROVAL_OPTIONS.length; i++) {
-        process.stdout.write('\n'); // option lines
-      }
-      process.stdout.write('\n'); // blank
-      process.stdout.write('\n'); // hint line
-    };
-
-    // Render the selector by moving cursor and rewriting
-    const render = () => {
-      // Move cursor up to the start of our menu
-      process.stdout.write(`\x1b[${SELECTOR_LINES}A`);
-      // Clear from cursor to end of screen
-      process.stdout.write('\x1b[J');
-
-      // Question
-      process.stdout.write(colors.primary(message) + '\n');
-      process.stdout.write('\n');
-
-      // Options
-      for (let i = 0; i < APPROVAL_OPTIONS.length; i++) {
-        const option = APPROVAL_OPTIONS[i];
-        if (i === selectedIndex) {
-          process.stdout.write(colors.selected(`  ${symbols.pointer} ${option.label}`) + '\n');
-        } else {
-          process.stdout.write(colors.unselected(`    ${option.label}`) + '\n');
-        }
-      }
-
-      // Hint
-      process.stdout.write('\n');
-      process.stdout.write(colors.dim('(↑↓ navigate · Enter select · Esc abort)') + '\n');
-    };
-
-    const cleanup = () => {
-      if (resolved) return;
-      resolved = true;
-
-      // Restore terminal state
-      stdin.setRawMode(false);
-      stdin.removeListener('data', onData);
-      stdin.pause();
-
-      // Clear the selector UI - move up and clear
-      process.stdout.write(`\x1b[${SELECTOR_LINES}A`);
-      process.stdout.write('\x1b[J');
-    };
-
-    // Handle keypress with proper escape sequence buffering
-    const onData = (data: string) => {
-      if (resolved) return;
-
-      keyBuffer += data;
-
-      // Process complete sequences
-      while (keyBuffer.length > 0) {
-        // Check for escape sequences (arrow keys)
-        if (keyBuffer.startsWith('\x1b[A')) {
-          // Arrow up
-          selectedIndex = Math.max(0, selectedIndex - 1);
-          render();
-          keyBuffer = keyBuffer.slice(3);
-          continue;
-        }
-        if (keyBuffer.startsWith('\x1b[B')) {
-          // Arrow down
-          selectedIndex = Math.min(APPROVAL_OPTIONS.length - 1, selectedIndex + 1);
-          render();
-          keyBuffer = keyBuffer.slice(3);
-          continue;
-        }
-        if (keyBuffer.startsWith('\x1b[C') || keyBuffer.startsWith('\x1b[D')) {
-          // Arrow left/right - ignore
-          keyBuffer = keyBuffer.slice(3);
-          continue;
-        }
-
-        // Check for bare Escape (need to wait to see if more chars follow)
-        if (keyBuffer === '\x1b') {
-          // Wait a bit to see if more chars are coming (escape sequence)
-          setTimeout(() => {
-            if (keyBuffer === '\x1b' && !resolved) {
-              // It's a bare Escape key
-              cleanup();
-              resolve('abort');
-            }
-          }, 50);
-          return;
-        }
-
-        // Skip incomplete escape sequences
-        if (keyBuffer.startsWith('\x1b') && keyBuffer.length < 3) {
-          return; // Wait for more data
-        }
-
-        // Handle other keys
-        const char = keyBuffer[0];
-        keyBuffer = keyBuffer.slice(1);
-
-        // Enter key
-        if (char === '\r' || char === '\n') {
-          cleanup();
-          resolve(APPROVAL_OPTIONS[selectedIndex].value);
-          return;
-        }
-
-        // Vim-style navigation
-        if (char === 'k' || char === 'K') {
-          selectedIndex = Math.max(0, selectedIndex - 1);
-          render();
-          continue;
-        }
-        if (char === 'j' || char === 'J') {
-          selectedIndex = Math.min(APPROVAL_OPTIONS.length - 1, selectedIndex + 1);
-          render();
-          continue;
-        }
-
-        // Ctrl+C
-        if (char === '\x03') {
-          cleanup();
-          process.exit(0);
-        }
-      }
-    };
-
-    // Enable raw mode to capture individual keypresses
-    stdin.setRawMode(true);
-    stdin.resume();
-    stdin.setEncoding('utf8');
-
-    // Initial render
-    renderInitial();
-    render();
-
-    stdin.on('data', onData);
-  });
+    return answer;
+  } catch (error) {
+    // User pressed Esc or Ctrl+C - treat as abort
+    if (error instanceof Error && error.message.includes('User force closed')) {
+      return 'abort';
+    }
+    // For any other cancellation (Esc key), return abort
+    return 'abort';
+  }
 }
 
 /**
