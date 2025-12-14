@@ -576,13 +576,23 @@ export function renderToolStart(toolName: string): string {
 
 /**
  * Render tool activity end - completes progress
+ *
+ * @param toolName - The tool that finished
+ * @param success - Whether the tool succeeded
+ * @param message - Optional message for context (shown for errors)
  */
 export function renderToolEnd(toolName: string, success: boolean, message?: string): string {
   progress.stop();
   // Don't output anything on success for cleaner UX
   // Only output on failure
   if (!success) {
-    return colors.warning(`${emojis.error} Failed: ${toolName.replace(/_/g, ' ')}`);
+    const toolDisplay = toolName.replace(/_/g, ' ');
+    // If we have a message, show it for context (truncated)
+    if (message) {
+      const truncatedMsg = message.length > 60 ? message.substring(0, 57) + '...' : message;
+      return colors.warning(`${emojis.error} ${toolDisplay}: ${truncatedMsg}`);
+    }
+    return colors.warning(`${emojis.error} Failed: ${toolDisplay}`);
   }
   return '';
 }

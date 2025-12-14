@@ -459,7 +459,7 @@ function createActivityCallback(): ActivityCallback {
 
       case 'tool_end':
         if (event.details?.tool) {
-          const result = renderToolEnd(event.details.tool, event.details.success ?? true);
+          const result = renderToolEnd(event.details.tool, event.details.success ?? true, event.message);
           if (result) console.log(result); // Only print if there's an error message
         }
         break;

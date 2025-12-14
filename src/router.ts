@@ -432,13 +432,13 @@ async function executeToolCall(
       if (isAdvisorTool && advisorName) {
         onActivity({
           type: "advisor_end",
-          message: `${advisorName} failed`,
+          message: `${advisorName} failed: ${errorMsg}`,
           details: { advisor: advisorName, success: false },
         });
       } else {
         onActivity({
           type: "tool_end",
-          message: `Failed ${name}`,
+          message: errorMsg, // Pass actual error message for context
           details: { tool: name, success: false },
         });
       }

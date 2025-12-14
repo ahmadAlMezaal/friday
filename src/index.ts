@@ -12,14 +12,9 @@ import {
   colors,
   symbols,
   renderHeader,
-  getModeDisplay,
-  renderThinking,
   renderResponseStart,
   renderResponseEnd,
-  renderToolCall,
-  renderAdvisorResult,
   renderError,
-  shortenPath,
   renderActivity,
   renderToolStart,
   renderToolEnd,
@@ -152,35 +147,40 @@ program
       console.log('');
 
       // Create activity callback for real-time display
+      // NOTE: render functions handle their own output via the progress indicator
+      // Do NOT wrap them in console.log() as that adds extra newlines
       const onActivity: ActivityCallback = (event: ActivityEvent) => {
         switch (event.type) {
           case 'context_gathering':
-            console.log(renderContextGathering());
+            renderContextGathering(); // Progress handles display
             break;
 
           case 'thinking':
-            console.log(renderActivity(event.message));
+            renderActivity(event.message); // Progress handles display
             break;
 
           case 'tool_start':
             if (event.details?.tool) {
-              console.log(renderToolStart(event.details.tool));
+              renderToolStart(event.details.tool); // Progress handles display
             }
             break;
 
           case 'tool_end':
-            // End events handled silently for cleaner output
+            if (event.details?.tool) {
+              const result = renderToolEnd(event.details.tool, event.details.success ?? true, event.message);
+              if (result) console.log(result); // Only print if there's an actual error message
+            }
             break;
 
           case 'advisor_start':
             if (event.details?.advisor) {
-              console.log(renderAdvisorStart(event.details.advisor, event.details.question));
+              renderAdvisorStart(event.details.advisor, event.details.question); // Progress handles display
             }
             break;
 
           case 'advisor_end':
             if (event.details?.advisor) {
-              console.log(renderAdvisorEnd(event.details.advisor, event.details.success ?? true));
+              renderAdvisorEnd(event.details.advisor, event.details.success ?? true); // Progress handles display
             }
             break;
         }
